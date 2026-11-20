@@ -1,0 +1,6 @@
+{
+  "name": "KTP IPTV",
+  "description": "Lecteur IPTV Kotlin & Web compatible M3U, Xtream Codes et iptv-org avec proxy HTTP/HTTPS intégré et CI/CD GitHub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

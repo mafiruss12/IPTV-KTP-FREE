@@ -1,0 +1,4 @@
+-keep class com.ktp.iptv.data.model.** { *; }
+-keep class com.ktp.iptv.data.remote.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
