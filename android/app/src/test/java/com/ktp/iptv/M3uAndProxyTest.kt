@@ -54,4 +54,12 @@ class M3uAndProxyTest {
         assertTrue(rewritten.contains("http://127.0.0.1:8899/stream?url=http%3A%2F%2Forigin.example.org%2Fhls%2Fsegment001.ts"))
         assertTrue(rewritten.contains("http://127.0.0.1:8899/stream?url=https%3A%2F%2Fcdn.example.org%2Fhd%2Fsegment002.ts"))
     }
+
+    @Test
+    fun detectsNewerGitHubReleaseVersions() {
+        assertTrue(com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("v1.0.1", "1.0.0", 1))
+        assertTrue(com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("build-5", "1.0.0", 1))
+        assertEquals(false, com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("v1.0.0", "1.0.0", 1))
+        assertEquals(false, com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("build-1", "1.0.0", 1))
+    }
 }

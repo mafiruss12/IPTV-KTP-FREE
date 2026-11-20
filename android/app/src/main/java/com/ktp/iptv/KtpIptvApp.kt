@@ -5,6 +5,7 @@ import com.ktp.iptv.data.local.IptvDatabase
 import com.ktp.iptv.data.remote.IptvOrgRepository
 import com.ktp.iptv.data.remote.XtreamRepository
 import com.ktp.iptv.proxy.LocalStreamProxy
+import com.ktp.iptv.update.AppUpdateManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -20,6 +21,8 @@ class KtpIptvApp : Application() {
         private set
     lateinit var xtreamRepository: XtreamRepository
         private set
+    lateinit var appUpdateManager: AppUpdateManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -34,6 +37,7 @@ class KtpIptvApp : Application() {
         database = IptvDatabase.getInstance(this)
         iptvOrgRepository = IptvOrgRepository(okHttpClient)
         xtreamRepository = XtreamRepository(okHttpClient)
+        appUpdateManager = AppUpdateManager(okHttpClient)
     }
 
     override fun onTerminate() {

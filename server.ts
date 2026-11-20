@@ -259,6 +259,15 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         }
       }
 
+      indexed.sort((a, b) => {
+        const score = (c: IndexedChannel) =>
+          (c.type === 'live_24_7' ? 8 : 0) +
+          (c.logo ? 4 : 0) +
+          (!c.isGeoBlocked ? 2 : 0) +
+          (c.countryCode !== 'INT' ? 1 : 0);
+        return score(b) - score(a);
+      });
+
       const countryList = Array.from(countryCounts.entries())
         .map(([code, count]) => {
           const info = countryMap.get(code);
@@ -793,6 +802,59 @@ async function startServer() {
       return;
     }
     res.json({ path: relPath, content: fs.readFileSync(fullPath, 'utf-8') });
+  });
+
+  // In-App Update endpoint checking latest GitHub Release APK on mafiruss12/IPTV-KTP-FREE
+  let updateCache: { data: Record<string, unknown>; fetchedAt: number } | null = null;
+  app.get('/api/app/update', async (_req: Request, res: Response) => {
+    try {
+      if (updateCache && Date.now() - updateCache.fetchedAt < 5 * 60 * 1000) {
+        res.json(updateCache.data);
+        return;
+      }
+      const ghRes = await fetch(
+        'https://api.github.com/repos/mafiruss12/IPTV-KTP-FREE/releases/latest',
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'KTP-IPTV-Updater/1.0',
+          },
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+      if (!ghRes.ok) {
+        res.status(ghRes.status).json({ error: `GitHub Releases HTTP ${ghRes.status}` });
+        return;
+      }
+      const rel = (await ghRes.json()) as {
+        tag_name?: string;
+        name?: string;
+        body?: string;
+        published_at?: string;
+        html_url?: string;
+        assets?: Array<{ name: string; size: number; browser_download_url: string }>;
+      };
+      const debugApk = rel.assets?.find((a) => a.name.endsWith('debug.apk'));
+      const releaseApk = rel.assets?.find((a) => a.name.endsWith('.apk'));
+      const chosenApk = debugApk || releaseApk;
+      const payload = {
+        tag: rel.tag_name || 'v1.0.0',
+        name: rel.name || rel.tag_name || 'KTP IPTV',
+        publishedAt: rel.published_at || new Date().toISOString(),
+        notes: rel.body || '',
+        htmlUrl: rel.html_url || 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases',
+        apkName: chosenApk?.name || null,
+        apkUrl: chosenApk?.browser_download_url || null,
+        apkSize: chosenApk?.size || 0,
+      };
+      updateCache = { data: payload, fetchedAt: Date.now() };
+      res.json(payload);
+    } catch (error) {
+      res.status(502).json({
+        error: 'Impossible de vérifier les mises à jour',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   if (IS_PROD) {

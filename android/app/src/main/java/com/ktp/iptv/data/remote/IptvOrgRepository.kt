@@ -201,6 +201,13 @@ class IptvOrgRepository(
             for (l in langCodes) languageCounts[l] = (languageCounts[l] ?: 0) + 1
         }
 
+        result.sortByDescending { ch ->
+            (if (ch.type == ChannelType.LIVE_24_7) 8 else 0) +
+                (if (!ch.logo.isNullOrBlank()) 4 else 0) +
+                (if (!ch.isGeoBlocked) 2 else 0) +
+                (if (ch.countryCode != "INT") 1 else 0)
+        }
+
         val countries = countryCounts.entries
             .map { (code, count) ->
                 val info = countryMap[code]

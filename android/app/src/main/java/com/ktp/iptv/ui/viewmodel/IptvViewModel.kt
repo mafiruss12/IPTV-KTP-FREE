@@ -1,9 +1,11 @@
 package com.ktp.iptv.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ktp.iptv.KtpIptvApp
+import com.ktp.iptv.update.AppUpdateRelease
 import com.ktp.iptv.data.local.FavoriteChannelEntity
 import com.ktp.iptv.data.local.FavoriteListEntity
 import com.ktp.iptv.data.local.PlaylistSourceEntity
@@ -40,7 +42,20 @@ data class IptvUiState(
     val activeChannel: Channel? = null,
     val playableUrl: String? = null,
     val proxyMode: ProxyMode = ProxyMode.AUTO_LOCAL,
-    val remoteProxyUrl: String = ""
+    val remoteProxyUrl: String = "",
+    val availableUpdate: AppUpdateRelease? = null,
+    val isCheckingUpdate: Boolean = false,
+    val updateDownloadProgress: Float? = null,
+    val updateMessage: String? = null,
+    val updateDismissed: Boolean = false
+)
+
+data class UpdateUiState(
+    val release: AppUpdateRelease? = null,
+    val isChecking: Boolean = false,
+    val downloadProgress: Float? = null,
+    val message: String? = null,
+    val dismissed: Boolean = false
 )
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +76,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private val activeChannelFlow = MutableStateFlow<Channel?>(null)
     private val proxyModeFlow = MutableStateFlow(ProxyMode.AUTO_LOCAL)
     private val remoteProxyFlow = MutableStateFlow("")
+    private val updateUiFlow = MutableStateFlow(UpdateUiState())
 
     val favoriteLists: StateFlow<List<FavoriteListEntity>> = dao.observeFavoriteLists()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -83,7 +99,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         activeChannelFlow,
         proxyModeFlow,
         remoteProxyFlow,
-        streamProtocolCounts
+        streamProtocolCounts,
+        updateUiFlow
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val remote = values[0] as List<Channel>
@@ -103,6 +120,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         val remoteProxy = values[10] as String
         @Suppress("UNCHECKED_CAST")
         val protoCounts = values[11] as Pair<Int, Int>
+        val updateState = values[12] as UpdateUiState
 
         val all = custom + remote
         val q = filter.query.trim().lowercase()
@@ -137,13 +155,19 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             activeChannel = active,
             playableUrl = resolvedUrl,
             proxyMode = proxyMode,
-            remoteProxyUrl = remoteProxy
+            remoteProxyUrl = remoteProxy,
+            availableUpdate = updateState.release,
+            isCheckingUpdate = updateState.isChecking,
+            updateDownloadProgress = updateState.downloadProgress,
+            updateMessage = updateState.message,
+            updateDismissed = updateState.dismissed
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), IptvUiState())
 
     init {
         ensureDefaultFavoriteList()
         refreshCatalog()
+        checkForUpdate(silent = true)
     }
 
     private fun ensureDefaultFavoriteList() {
@@ -323,5 +347,72 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             dao.deleteSource(source.id)
             customChannels.value = customChannels.value.filterNot { it.sourceLabel == source.name }
         }
+    }
+
+    fun checkForUpdate(silent: Boolean = false) {
+        viewModelScope.launch {
+            updateUiFlow.value = updateUiFlow.value.copy(
+                isChecking = true,
+                message = if (silent) null else "Vérification des mises à jour…"
+            )
+            try {
+                val release = app.appUpdateManager.checkForUpdate()
+                updateUiFlow.value = updateUiFlow.value.copy(
+                    release = release,
+                    isChecking = false,
+                    dismissed = if (silent) false else updateUiFlow.value.dismissed,
+                    message = when {
+                        release == null -> if (silent) null else "Aucune release publiée trouvée."
+                        release.isNewer -> "Nouvelle version disponible : ${release.tag}"
+                        silent -> null
+                        else -> "Application à jour (${release.tag})"
+                    }
+                )
+            } catch (e: Exception) {
+                updateUiFlow.value = updateUiFlow.value.copy(
+                    isChecking = false,
+                    message = if (silent) null else "Erreur de vérification : ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate(context: Context) {
+        val release = updateUiFlow.value.release ?: return
+        val apkUrl = release.apkUrl ?: run {
+            updateUiFlow.value = updateUiFlow.value.copy(message = "Aucun APK attaché à cette release.")
+            return
+        }
+        viewModelScope.launch {
+            updateUiFlow.value = updateUiFlow.value.copy(
+                downloadProgress = 0f,
+                message = "Téléchargement de ${release.apkName ?: "la mise à jour"}…"
+            )
+            val result = app.appUpdateManager.downloadAndInstallApk(
+                context = context,
+                apkUrl = apkUrl,
+                fileName = release.apkName ?: "ktp-iptv-${release.tag}.apk"
+            ) { progress ->
+                updateUiFlow.value = updateUiFlow.value.copy(downloadProgress = progress)
+            }
+            updateUiFlow.value = result.fold(
+                onSuccess = {
+                    updateUiFlow.value.copy(
+                        downloadProgress = null,
+                        message = "Installateur lancé."
+                    )
+                },
+                onFailure = { err ->
+                    updateUiFlow.value.copy(
+                        downloadProgress = null,
+                        message = "Échec : ${err.message}"
+                    )
+                }
+            )
+        }
+    }
+
+    fun dismissUpdatePrompt() {
+        updateUiFlow.value = updateUiFlow.value.copy(dismissed = true)
     }
 }

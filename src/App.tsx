@@ -3,14 +3,13 @@ import {
   Bookmark,
   ChevronDown,
   Code2,
-  FolderPlus,
-  Globe,
-  Layers,
+  Download,
   Play,
   RefreshCw,
   Search,
   Server,
   ShieldCheck,
+  SlidersHorizontal,
   Tv,
   X,
 } from 'lucide-react';
@@ -29,6 +28,17 @@ import { FavoritesView } from './components/FavoritesView';
 import { KotlinProjectView } from './components/KotlinProjectView';
 
 type ActiveTab = 'channels' | 'favorites' | 'sources' | 'kotlin';
+
+interface AppUpdateInfo {
+  tag: string;
+  name: string;
+  publishedAt: string;
+  notes: string;
+  htmlUrl: string;
+  apkName: string | null;
+  apkUrl: string | null;
+  apkSize: number;
+}
 
 const LS_FAVORITES_KEY = 'ktp_iptv_favorites_v1';
 const LS_SOURCES_KEY = 'ktp_iptv_sources_v1';
@@ -63,6 +73,7 @@ export default function App() {
   const [selectedProtocol, setSelectedProtocol] = useState<'all' | 'http' | 'https'>('all');
   const [sourceScope, setSourceScope] = useState<'all' | 'iptv-org' | 'custom'>('all');
   const [offset, setOffset] = useState(0);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   // Player & Proxy
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
@@ -70,7 +81,9 @@ export default function App() {
     const saved = localStorage.getItem(LS_PROXY_MODE_KEY);
     return saved === 'always' || saved === 'direct' ? saved : 'auto';
   });
-  const [showProxyModal, setShowProxyModal] = useState(false);
+  const [showSystemModal, setShowSystemModal] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   // Favorites & Custom Sources
   const [favoriteLists, setFavoriteLists] = useState<FavoriteList[]>(() => {
@@ -111,7 +124,6 @@ export default function App() {
     }
   });
 
-  // Cache known channels by ID for Favorites resolution
   const [channelLookup, setChannelLookup] = useState<Map<string, IptvChannel>>(() => new Map());
 
   useEffect(() => {
@@ -139,7 +151,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Load iptv-org metadata
+  // Load iptv-org metadata + check In-App Update release
   useEffect(() => {
     fetch('/api/iptv/meta')
       .then((r) => r.json())
@@ -147,7 +159,26 @@ export default function App() {
         if (data?.countries) setMeta(data);
       })
       .catch(() => {});
+
+    fetch('/api/app/update')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: AppUpdateInfo | null) => {
+        if (data?.tag) setUpdateInfo(data);
+      })
+      .catch(() => {});
   }, []);
+
+  const refreshUpdateCheck = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch('/api/app/update');
+      if (res.ok) {
+        setUpdateInfo((await res.json()) as AppUpdateInfo);
+      }
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   // Load filtered iptv-org channels
   useEffect(() => {
@@ -211,7 +242,6 @@ export default function App() {
     sourceScope,
   ]);
 
-  // Keep custom channels in lookup map
   useEffect(() => {
     setChannelLookup((prev) => {
       const next = new Map(prev);
@@ -292,6 +322,13 @@ export default function App() {
     return set;
   }, [favoriteLists]);
 
+  const activeFilterCount =
+    (selectedCountry !== 'ALL' ? 1 : 0) +
+    (selectedType !== 'all' ? 1 : 0) +
+    (selectedCategory !== 'all' ? 1 : 0) +
+    (selectedLanguage !== 'all' ? 1 : 0) +
+    (selectedProtocol !== 'all' ? 1 : 0);
+
   const handleToggleFavorite = (channel: IptvChannel) => {
     setChannelLookup((prev) => new Map(prev).set(channel.id, channel));
     setFavoriteLists((prev) => {
@@ -350,6 +387,15 @@ export default function App() {
     setCustomChannels((prev) => prev.filter((c) => !c.id.startsWith(`${sourceId}:`)));
   };
 
+  const handleNextChannel = () => {
+    if (displayedChannels.length === 0) return;
+    const idx = activeChannel
+      ? displayedChannels.findIndex((c) => c.id === activeChannel.id)
+      : -1;
+    const next = displayedChannels[(idx + 1) % displayedChannels.length];
+    if (next) setActiveChannel(next);
+  };
+
   const resetFilters = () => {
     setSearchQuery('');
     setSelectedCountry('ALL');
@@ -360,30 +406,104 @@ export default function App() {
     setSourceScope('all');
   };
 
-  const hasActiveFilters =
-    searchQuery.trim() !== '' ||
-    selectedCountry !== 'ALL' ||
-    selectedType !== 'all' ||
-    selectedCategory !== 'all' ||
-    selectedLanguage !== 'all' ||
-    selectedProtocol !== 'all' ||
-    sourceScope !== 'all';
+  const renderFilterSelects = () => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+      <div className="relative">
+        <select
+          aria-label="Filtrer par pays"
+          value={selectedCountry}
+          onChange={(e) => setSelectedCountry(e.target.value)}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          <option value="ALL">Pays : Tous ({meta?.countries.length || 182})</option>
+          {meta?.countries.map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.flag} {c.name} ({c.count})
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+
+      <div className="relative">
+        <select
+          aria-label="Filtrer par type de chaîne"
+          value={selectedType}
+          onChange={(e) => setSelectedType(e.target.value)}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          {CHANNEL_TYPE_OPTIONS.map((t) => (
+            <option key={t.value} value={t.value}>
+              Type : {t.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+
+      <div className="relative">
+        <select
+          aria-label="Filtrer par catégorie"
+          value={selectedCategory}
+          onChange={(e) => setSelectedCategory(e.target.value)}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          <option value="all">Catégorie : Toutes</option>
+          {meta?.categories.map((cat) => (
+            <option key={cat.id} value={cat.id}>
+              {cat.name} ({cat.count})
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+
+      <div className="relative">
+        <select
+          aria-label="Filtrer par langue"
+          value={selectedLanguage}
+          onChange={(e) => setSelectedLanguage(e.target.value)}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          <option value="all">Langue : Toutes</option>
+          {meta?.languages.slice(0, 120).map((lang) => (
+            <option key={lang.code} value={lang.code}>
+              {lang.name} ({lang.count})
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+
+      <div className="relative">
+        <select
+          aria-label="Filtrer par protocole HTTP/HTTPS"
+          value={selectedProtocol}
+          onChange={(e) => setSelectedProtocol(e.target.value as 'all' | 'http' | 'https')}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          <option value="all">Protocole : HTTP & HTTPS</option>
+          <option value="https">HTTPS natif ({meta?.stats.httpsCount || 0})</option>
+          <option value="http">HTTP via Proxy ({meta?.stats.httpCount || 0})</option>
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#0B0D11] text-slate-100 pb-20 md:pb-8">
       {/* 3-Zone Top Bar Contract */}
-      <header className="sticky top-0 z-40 h-14 bg-[#0B0D11]/90 backdrop-blur-md border-b border-slate-800/80">
+      <header className="sticky top-0 z-40 h-13 sm:h-14 bg-[#0B0D11]/95 backdrop-blur-md border-b border-slate-800/80">
         <div className="max-w-[1440px] mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
-          {/* Zone 1: Single-line brand wordmark */}
           <button
             type="button"
             onClick={() => setActiveTab('channels')}
-            className="font-display text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+            className="font-display text-base sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
           >
             KTP IPTV
           </button>
 
-          {/* Zone 2: 4 single-line nav links */}
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400">
             <button
               type="button"
@@ -423,26 +543,24 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: 1 primary CTA */}
           <div className="shrink-0">
             <button
               type="button"
-              onClick={() => setShowProxyModal(true)}
-              className="min-h-[40px] px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
+              onClick={() => setShowSystemModal(true)}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
             >
-              Proxy HTTPS
+              Proxy & MàJ
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 pt-5">
+      <main className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3 sm:pt-5">
         {activeTab === 'channels' && (
-          <div className="space-y-5">
-            {/* Search & 4-Dimension Filter Toolbar */}
-            <section className="rounded-2xl bg-[#131720] border border-slate-800/80 p-4 space-y-3">
-              <div className="flex flex-col lg:flex-row gap-3">
-                {/* Quick Search */}
+          <div className="space-y-4">
+            {/* Desktop Filter Toolbar */}
+            <section className="hidden lg:block rounded-2xl bg-[#131720] border border-slate-800/80 p-4 space-y-3">
+              <div className="flex gap-3">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
@@ -453,9 +571,7 @@ export default function App() {
                     className="w-full h-11 pl-10 pr-4 rounded-xl bg-[#0B0D11] border border-slate-800 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
                   />
                 </div>
-
-                {/* Source scope tabs */}
-                <div className="flex items-center gap-1 p-1 bg-[#0B0D11] rounded-xl border border-slate-800 shrink-0 overflow-x-auto no-scrollbar">
+                <div className="flex items-center gap-1 p-1 bg-[#0B0D11] rounded-xl border border-slate-800 shrink-0">
                   {[
                     { id: 'all', label: 'Toutes sources' },
                     { id: 'iptv-org', label: 'iptv-org' },
@@ -465,7 +581,7 @@ export default function App() {
                       key={item.id}
                       type="button"
                       onClick={() => setSourceScope(item.id as 'all' | 'iptv-org' | 'custom')}
-                      className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                      className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
                         sourceScope === item.id
                           ? 'bg-[#1B212E] text-white'
                           : 'text-slate-400 hover:text-slate-200'
@@ -476,114 +592,12 @@ export default function App() {
                   ))}
                 </div>
               </div>
-
-              {/* Country, Type, Category, Language, Protocol */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-                <div className="relative">
-                  <select
-                    aria-label="Filtrer par pays"
-                    value={selectedCountry}
-                    onChange={(e) => setSelectedCountry(e.target.value)}
-                    className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="ALL">Pays : Tous ({meta?.countries.length || 250})</option>
-                    {meta?.countries.map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.flag} {c.name} ({c.count})
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative">
-                  <select
-                    aria-label="Filtrer par type de chaîne"
-                    value={selectedType}
-                    onChange={(e) => setSelectedType(e.target.value)}
-                    className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
-                  >
-                    {CHANNEL_TYPE_OPTIONS.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        Type : {t.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative">
-                  <select
-                    aria-label="Filtrer par catégorie"
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="all">Catégorie : Toutes</option>
-                    {meta?.categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name} ({cat.count})
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative">
-                  <select
-                    aria-label="Filtrer par langue"
-                    value={selectedLanguage}
-                    onChange={(e) => setSelectedLanguage(e.target.value)}
-                    className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="all">Langue : Toutes</option>
-                    {meta?.languages.slice(0, 120).map((lang) => (
-                      <option key={lang.code} value={lang.code}>
-                        {lang.name} ({lang.count})
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-
-                <div className="relative col-span-2 sm:col-span-1">
-                  <select
-                    aria-label="Filtrer par protocole HTTP/HTTPS"
-                    value={selectedProtocol}
-                    onChange={(e) => setSelectedProtocol(e.target.value as 'all' | 'http' | 'https')}
-                    className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="all">Protocole : HTTP & HTTPS</option>
-                    <option value="https">HTTPS natif ({meta?.stats.httpsCount || 0})</option>
-                    <option value="http">HTTP via Proxy ({meta?.stats.httpCount || 0})</option>
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-
-              {hasActiveFilters && (
-                <div className="flex items-center justify-between pt-1 text-xs text-slate-400">
-                  <span className="tabular-nums">
-                    {(sourceScope === 'custom'
-                      ? filteredCustomChannels.length
-                      : totalRemote + filteredCustomChannels.length
-                    ).toLocaleString('fr-FR')}{' '}
-                    chaînes correspondantes
-                  </span>
-                  <button
-                    type="button"
-                    onClick={resetFilters}
-                    className="text-blue-400 hover:text-blue-300 font-medium"
-                  >
-                    Réinitialiser les filtres
-                  </button>
-                </div>
-              )}
+              {renderFilterSelects()}
             </section>
 
-            {/* Player + Channel Guide Split */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              <div className="lg:col-span-7 xl:col-span-8 lg:sticky lg:top-20">
+            {/* Player + Guide Split (Player is FIRST on mobile!) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 items-start">
+              <div className="lg:col-span-7 xl:col-span-8 lg:sticky lg:top-20 space-y-3">
                 <VideoPlayer
                   channel={activeChannel}
                   proxyMode={proxyMode}
@@ -592,21 +606,59 @@ export default function App() {
                   onToggleFavorite={handleToggleFavorite}
                   favoriteLists={favoriteLists}
                   onToggleChannelInList={handleToggleChannelInList}
+                  onNextChannel={handleNextChannel}
                 />
+
+                {/* Mobile Compact Search + Filter Drawer Trigger right below Player */}
+                <div className="lg:hidden flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Rechercher une chaîne…"
+                      className="w-full h-11 pl-9 pr-3 rounded-xl bg-[#131720] border border-slate-800 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMobileFilters(true)}
+                    className={`min-h-[44px] px-3.5 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                      activeFilterCount > 0
+                        ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
+                        : 'bg-[#131720] border-slate-800 text-slate-200'
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-4 h-4" />
+                    <span>Filtres{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="lg:col-span-5 xl:col-span-4 rounded-2xl bg-[#131720] border border-slate-800/80 overflow-hidden">
-                <div className="px-4 py-3.5 border-b border-slate-800/80 flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between gap-2">
                   <h2 className="font-display text-sm font-semibold text-white">
                     Guide des chaînes
                   </h2>
-                  <span className="font-mono text-xs text-slate-400 tabular-nums">
-                    {displayedChannels.length} /{' '}
-                    {(sourceScope === 'custom'
-                      ? filteredCustomChannels.length
-                      : totalRemote + filteredCustomChannels.length
-                    ).toLocaleString('fr-FR')}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    {(activeFilterCount > 0 || searchQuery.trim() !== '') && (
+                      <button
+                        type="button"
+                        onClick={resetFilters}
+                        className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                      >
+                        Réinitialiser
+                      </button>
+                    )}
+                    <span className="font-mono text-xs text-slate-400 tabular-nums">
+                      {displayedChannels.length} /{' '}
+                      {(sourceScope === 'custom'
+                        ? filteredCustomChannels.length
+                        : totalRemote + filteredCustomChannels.length
+                      ).toLocaleString('fr-FR')}
+                    </span>
+                  </div>
                 </div>
 
                 {loadingCatalog ? (
@@ -621,7 +673,7 @@ export default function App() {
                     Aucune chaîne ne correspond à ces critères.
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-800/70 max-h-[640px] overflow-y-auto">
+                  <div className="divide-y divide-slate-800/70 max-h-[540px] lg:max-h-[640px] overflow-y-auto">
                     {displayedChannels.map((ch) => {
                       const isPlaying = activeChannel?.id === ch.id;
                       const isFav = allFavoriteChannelIds.has(ch.id);
@@ -658,7 +710,11 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => handleToggleFavorite(ch)}
-                            aria-label={isFav ? `Retirer ${ch.name} des favoris` : `Ajouter ${ch.name} aux favoris`}
+                            aria-label={
+                              isFav
+                                ? `Retirer ${ch.name} des favoris`
+                                : `Ajouter ${ch.name} aux favoris`
+                            }
                             className="min-h-[44px] min-w-[44px] rounded-xl hover:bg-[#1B212E] flex items-center justify-center shrink-0 transition-colors"
                           >
                             <Bookmark
@@ -745,20 +801,18 @@ export default function App() {
         })}
       </nav>
 
-      {/* Proxy HTTPS Settings Modal */}
-      {showProxyModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-[#131720] border border-slate-800 p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="w-5 h-5 text-blue-400" />
-                <h2 className="font-display text-lg font-semibold text-white">
-                  Système de Proxy HTTP ↔ HTTPS
-                </h2>
-              </div>
+      {/* Mobile Filter Bottom Sheet */}
+      {showMobileFilters && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-end">
+          <div className="w-full rounded-t-3xl bg-[#131720] border-t border-slate-800 p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="w-10 h-1.5 bg-slate-700 rounded-full mx-auto" />
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-base font-semibold text-white">
+                Filtrer les chaînes
+              </h2>
               <button
                 type="button"
-                onClick={() => setShowProxyModal(false)}
+                onClick={() => setShowMobileFilters(false)}
                 aria-label="Fermer"
                 className="min-h-[40px] min-w-[40px] rounded-xl hover:bg-[#1B212E] text-slate-400 flex items-center justify-center"
               >
@@ -766,26 +820,146 @@ export default function App() {
               </button>
             </div>
 
-            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-              Environ {meta ? meta.stats.httpCount.toLocaleString('fr-FR') : '3 814'} chaînes de la base iptv-org utilisent <span className="font-mono text-slate-300">http://</span> sans chiffrement TLS ou exigent des en-têtes <span className="font-mono text-slate-300">User-Agent</span> / <span className="font-mono text-slate-300">Referer</span>. Le proxy réécrit les manifestes HLS et encapsule les segments en HTTPS.
-            </p>
+            <div className="grid grid-cols-3 gap-1 p-1 bg-[#0B0D11] rounded-xl border border-slate-800">
+              {[
+                { id: 'all', label: 'Toutes' },
+                { id: 'iptv-org', label: 'iptv-org' },
+                { id: 'custom', label: `M3U (${customChannels.length})` },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSourceScope(item.id as 'all' | 'iptv-org' | 'custom')}
+                  className={`min-h-[38px] px-2 rounded-lg text-xs font-medium transition-colors ${
+                    sourceScope === item.id ? 'bg-[#1B212E] text-white' : 'text-slate-400'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
 
-            <div className="mt-4 space-y-2">
+            {renderFilterSelects()}
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="flex-1 min-h-[44px] rounded-xl bg-[#1B212E] text-slate-200 text-xs font-semibold"
+              >
+                Réinitialiser
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowMobileFilters(false)}
+                className="flex-1 min-h-[44px] rounded-xl bg-blue-600 text-white text-xs font-semibold"
+              >
+                Appliquer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proxy HTTPS & In-App Update Modal */}
+      {showSystemModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-[#131720] border border-slate-800 p-5 sm:p-6 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-blue-400" />
+                <h2 className="font-display text-lg font-semibold text-white">
+                  Proxy HTTP ↔ HTTPS & Mise à jour
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSystemModal(false)}
+                aria-label="Fermer"
+                className="min-h-[40px] min-w-[40px] rounded-xl hover:bg-[#1B212E] text-slate-400 flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* In-App Update Section */}
+            <div className="rounded-xl bg-[#0B0D11] border border-slate-800 p-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-blue-400">
+                  Mise à jour In-App Android (GitHub Releases)
+                </span>
+                <button
+                  type="button"
+                  onClick={refreshUpdateCheck}
+                  disabled={checkingUpdate}
+                  className="text-xs text-slate-400 hover:text-white inline-flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${checkingUpdate ? 'animate-spin' : ''}`} />
+                  <span>Vérifier</span>
+                </button>
+              </div>
+              {updateInfo ? (
+                <>
+                  <div className="text-sm font-semibold text-white">
+                    {updateInfo.name}{' '}
+                    <span className="font-mono text-xs text-slate-400">({updateInfo.tag})</span>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    {updateInfo.apkName
+                      ? `APK prêt : ${updateInfo.apkName} (${(
+                          updateInfo.apkSize /
+                          (1024 * 1024)
+                        ).toFixed(1)} Mo)`
+                      : 'Publication CI/CD disponible sur GitHub'}
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {updateInfo.apkUrl && (
+                      <a
+                        href={updateInfo.apkUrl}
+                        download
+                        className="min-h-[40px] px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Télécharger l’APK</span>
+                      </a>
+                    )}
+                    <a
+                      href={updateInfo.htmlUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#1B212E] hover:bg-slate-700 text-slate-200 text-xs font-medium inline-flex items-center"
+                    >
+                      Notes de version
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs text-slate-400">
+                  Vérification de la dernière version Android en cours…
+                </div>
+              )}
+            </div>
+
+            {/* Proxy Mode Options */}
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-slate-300">
+                Mode de routage HTTP ↔ HTTPS ({meta ? meta.stats.httpCount.toLocaleString('fr-FR') : '3 814'} flux HTTP détectés)
+              </div>
               {[
                 {
                   mode: 'auto' as ProxyMode,
-                  title: 'Automatique (Recommandé)',
-                  desc: 'Proxy actif pour tous les flux HTTP ou nécessitant des en-têtes personnalisés ; direct pour HTTPS.',
+                  title: 'Proxy Auto (Recommandé)',
+                  desc: 'Relaye les flux via /api/proxy/stream en HTTPS pour contourner HTTP en clair et CORS.',
                 },
                 {
                   mode: 'always' as ProxyMode,
-                  title: 'Proxy HTTPS Forcé',
-                  desc: 'Relaye 100 % des flux (HTTP et HTTPS) pour contourner CORS et redirections mixtes.',
+                  title: 'Proxy Forcé',
+                  desc: 'Encapsule 100 % des flux et segments HLS via le relais HTTPS.',
                 },
                 {
                   mode: 'direct' as ProxyMode,
-                  title: 'Connexion Directe',
-                  desc: 'Lecture directe sans relais (utile uniquement sur lecteur natif ou flux HTTPS CORS-ouvert).',
+                  title: 'Direct',
+                  desc: 'Lecture directe sans relais (réservé aux flux HTTPS compatibles CORS).',
                 },
               ].map((opt) => (
                 <button
@@ -802,20 +976,6 @@ export default function App() {
                   <div className="text-xs text-slate-400 mt-0.5">{opt.desc}</div>
                 </button>
               ))}
-            </div>
-
-            <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <div className="flex items-center gap-2 font-mono">
-                <Globe className="w-3.5 h-3.5 text-blue-400" />
-                <span>Endpoint : /api/proxy/stream</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowProxyModal(false)}
-                className="min-h-[40px] px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold"
-              >
-                Fermer
-              </button>
             </div>
           </div>
         </div>

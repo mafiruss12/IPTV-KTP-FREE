@@ -27,12 +27,14 @@ import com.ktp.iptv.data.model.Channel
 import com.ktp.iptv.data.model.ChannelType
 import com.ktp.iptv.ui.screens.CatalogScreen
 import com.ktp.iptv.ui.screens.FavoritesScreen
+import com.ktp.iptv.ui.screens.InAppUpdateDialog
 import com.ktp.iptv.ui.screens.ProxySettingsScreen
 import com.ktp.iptv.ui.screens.SourcesScreen
 import com.ktp.iptv.ui.theme.KtpIptvTheme
 import com.ktp.iptv.ui.theme.ObsidianBg
 import com.ktp.iptv.ui.theme.ObsidianSurface
 import com.ktp.iptv.ui.viewmodel.IptvViewModel
+import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
 
@@ -44,6 +46,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             KtpIptvTheme {
+                val context = LocalContext.current
                 val state by viewModel.uiState.collectAsState()
                 val favLists by viewModel.favoriteLists.collectAsState()
                 val favChannels by viewModel.favoriteChannels.collectAsState()
@@ -141,10 +144,18 @@ class MainActivity : ComponentActivity() {
                                 state = state,
                                 onSelectProxyMode = viewModel::setProxyMode,
                                 onRemoteProxyChange = viewModel::setRemoteProxyUrl,
-                                onRefreshCatalog = viewModel::refreshCatalog
+                                onRefreshCatalog = viewModel::refreshCatalog,
+                                onCheckUpdate = { viewModel.checkForUpdate(silent = false) },
+                                onInstallUpdate = { viewModel.downloadAndInstallUpdate(context) }
                             )
                         }
                     }
+
+                    InAppUpdateDialog(
+                        state = state,
+                        onInstall = { viewModel.downloadAndInstallUpdate(context) },
+                        onDismiss = viewModel::dismissUpdatePrompt
+                    )
                 }
             }
         }

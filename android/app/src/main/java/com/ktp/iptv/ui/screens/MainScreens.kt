@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,13 +34,16 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.ktp.iptv.BuildConfig
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -560,22 +564,65 @@ fun ProxySettingsScreen(
     state: IptvUiState,
     onSelectProxyMode: (ProxyMode) -> Unit,
     onRemoteProxyChange: (String) -> Unit,
-    onRefreshCatalog: () -> Unit
+    onRefreshCatalog: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit
 ) {
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Proxy HTTP ↔ HTTPS & Réseau", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(
-            text = "Catalogue iptv-org : ${state.httpStreamsCount} flux HTTP et ${state.httpsStreamsCount} flux HTTPS.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF94A3B8)
-        )
+        item {
+            Text("Proxy HTTP ↔ HTTPS & Mise à jour", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Catalogue iptv-org : ${state.httpStreamsCount} flux HTTP et ${state.httpsStreamsCount} flux HTTPS.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF94A3B8)
+            )
+        }
 
-        ProxyMode.entries.forEach { mode ->
+        item {
+            Surface(color = ObsidianSurface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Mise à jour In-App", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Version installée : v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF94A3B8)
+                    )
+                    state.updateMessage?.let { msg ->
+                        Text(text = msg, style = MaterialTheme.typography.bodySmall, color = CobaltLight)
+                    }
+                    state.updateDownloadProgress?.let { progress ->
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onCheckUpdate,
+                            enabled = !state.isCheckingUpdate && state.updateDownloadProgress == null
+                        ) {
+                            Text(if (state.isCheckingUpdate) "Vérification…" else "Vérifier")
+                        }
+                        if (state.availableUpdate?.apkUrl != null) {
+                            Button(
+                                onClick = onInstallUpdate,
+                                enabled = state.updateDownloadProgress == null
+                            ) {
+                                Text(if (state.availableUpdate.isNewer) "Installer ${state.availableUpdate.tag}" else "Réinstaller APK")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        items(ProxyMode.entries) { mode ->
             Surface(
                 color = if (state.proxyMode == mode) Color(0xFF1E3A8A).copy(alpha = 0.4f) else ObsidianSurface,
                 shape = RoundedCornerShape(14.dp),
@@ -591,17 +638,78 @@ fun ProxySettingsScreen(
             }
         }
 
-        OutlinedTextField(
-            value = state.remoteProxyUrl,
-            onValueChange = onRemoteProxyChange,
-            label = { Text("URL du proxy HTTPS distant (optionnel)") },
-            placeholder = { Text("https://votre-proxy-ktp.run.app") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
+        item {
+            OutlinedTextField(
+                value = state.remoteProxyUrl,
+                onValueChange = onRemoteProxyChange,
+                label = { Text("URL du proxy HTTPS distant (optionnel)") },
+                placeholder = { Text("https://votre-proxy-ktp.run.app") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
 
-        OutlinedButton(onClick = onRefreshCatalog) {
-            Text("Resynchroniser iptv-org")
+        item {
+            OutlinedButton(onClick = onRefreshCatalog) {
+                Text("Resynchroniser iptv-org")
+            }
         }
     }
+}
+
+@Composable
+fun InAppUpdateDialog(
+    state: IptvUiState,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val release = state.availableUpdate ?: return
+    if (!release.isNewer || state.updateDismissed) return
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ObsidianSurface,
+        title = {
+            Text("Mise à jour disponible (${release.tag})", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = release.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White
+                )
+                if (release.apkSizeBytes > 0) {
+                    val mb = release.apkSizeBytes / (1024f * 1024f)
+                    Text(
+                        text = String.format("Taille APK : %.1f Mo", mb),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+                state.updateDownloadProgress?.let { progress ->
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                state.updateMessage?.let { msg ->
+                    Text(text = msg, style = MaterialTheme.typography.bodySmall, color = CobaltLight)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onInstall,
+                enabled = state.updateDownloadProgress == null && release.apkUrl != null
+            ) {
+                Text("Télécharger & Installer")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Plus tard")
+            }
+        }
+    )
 }
