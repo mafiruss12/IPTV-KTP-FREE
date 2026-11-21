@@ -59,7 +59,20 @@ class M3uAndProxyTest {
     fun detectsNewerGitHubReleaseVersions() {
         assertTrue(com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("v1.0.1", "1.0.0", 1))
         assertTrue(com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("build-5", "1.0.0", 1))
+        assertTrue(com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("v1.2.6", "1.2.5", 5))
         assertEquals(false, com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("v1.0.0", "1.0.0", 1))
         assertEquals(false, com.ktp.iptv.update.AppUpdateManager.isRemoteVersionNewer("build-1", "1.0.0", 1))
+    }
+
+    @Test
+    fun decodesHtmlEntitiesAndClassifiesResolutions() {
+        assertEquals(
+            "Les Vacances de Golo & Rita",
+            com.ktp.iptv.data.model.TextSanitizer.decodeHtml("Les Vacances de Golo &amp; Rita")
+        )
+        assertEquals("4k", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("2160p", "TF1 UHD"))
+        assertEquals("1080p", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("1080p", "France 2"))
+        assertEquals("720p", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("720p", "Arte"))
+        assertEquals("sd", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("480i", "Chaine SD"))
     }
 }

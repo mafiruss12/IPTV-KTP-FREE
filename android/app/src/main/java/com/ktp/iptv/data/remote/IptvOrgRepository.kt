@@ -9,6 +9,7 @@ import com.ktp.iptv.data.model.CountryFilterOption
 import com.ktp.iptv.data.model.IptvCatalog
 import com.ktp.iptv.data.model.LanguageFilterOption
 import com.ktp.iptv.data.model.SourceKind
+import com.ktp.iptv.data.model.TextSanitizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext

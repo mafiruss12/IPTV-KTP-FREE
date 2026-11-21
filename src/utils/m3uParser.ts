@@ -1,4 +1,28 @@
-import type { ChannelType, IptvChannel } from '../types/iptv';
+import type { ChannelType, IptvChannel, ResolutionBucket } from '../types/iptv';
+
+export function decodeHtml(input?: string | null): string {
+  if (!input) return '';
+  return input
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .trim();
+}
+
+export function classifyResolution(quality?: string | null, name?: string | null): ResolutionBucket {
+  const combined = `${quality || ''} ${name || ''}`.toLowerCase();
+  if (/(\b4k\b|\buhd\b|2160p|3840x2160)/.test(combined)) return '4k';
+  if (/(1080p|1080i|\bfhd\b|full\s?hd|1920x1080)/.test(combined)) return '1080p';
+  if (/(720p|\bhd\b|1280x720)/.test(combined)) return '720p';
+  if (/(576p|540p|480p|360p|240p|\bsd\b)/.test(combined)) return 'sd';
+  return 'unknown';
+}
 
 function extractAttr(line: string, attr: string): string {
   const regex = new RegExp(`${attr}="([^"]*)"`, 'i');
@@ -30,13 +54,13 @@ export function parseM3uContent(
     if (raw.startsWith('#EXTINF:')) {
       currentId = extractAttr(raw, 'tvg-id');
       currentLogo = extractAttr(raw, 'tvg-logo');
-      currentGroup = extractAttr(raw, 'group-title') || 'General';
+      currentGroup = decodeHtml(extractAttr(raw, 'group-title') || 'General');
       currentCountry = extractAttr(raw, 'tvg-country').toUpperCase();
-      currentLanguage = extractAttr(raw, 'tvg-language');
+      currentLanguage = decodeHtml(extractAttr(raw, 'tvg-language'));
       const tvgName = extractAttr(raw, 'tvg-name');
       const commaIdx = raw.lastIndexOf(',');
       const displayName = commaIdx !== -1 ? raw.slice(commaIdx + 1).trim() : '';
-      currentName = displayName || tvgName || `Chaîne ${channels.length + 1}`;
+      currentName = decodeHtml(displayName || tvgName || `Chaîne ${channels.length + 1}`);
       continue;
     }
 
@@ -67,6 +91,7 @@ export function parseM3uContent(
 
       const categorySlug = currentGroup.toLowerCase().split(';')[0].trim() || 'general';
       const countryCode = currentCountry || 'INT';
+      const resolutionBucket = classifyResolution(undefined, currentName);
 
       channels.push({
         id: `${sourceId}:${currentId || channels.length + 1}:${encodeURIComponent(currentName).slice(0, 24)}`,
@@ -80,12 +105,14 @@ export function parseM3uContent(
         languages: currentLanguage ? [currentLanguage.toLowerCase()] : [],
         languageNames: currentLanguage ? [currentLanguage] : [],
         type,
+        quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
+        resolutionBucket,
         userAgent: currentUa || undefined,
         referrer: currentRef || undefined,
         isHttp: lowerUrl.startsWith('http://'),
         isGeoBlocked: false,
         sourceKind: 'm3u',
-        sourceLabel,
+        sourceLabel: decodeHtml(sourceLabel),
       });
 
       currentName = '';

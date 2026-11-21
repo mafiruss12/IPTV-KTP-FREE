@@ -2,14 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Bookmark,
   ChevronDown,
+  ChevronRight,
   Code2,
+  Compass,
   Download,
+  Folder,
+  History,
+  Home,
+  LayoutList,
+  Menu,
   Play,
+  Radio,
   RefreshCw,
   Search,
   Server,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
+  Trash2,
   Tv,
   X,
 } from 'lucide-react';
@@ -20,6 +30,7 @@ import type {
   IptvChannel,
   PlaylistSource,
   ProxyMode,
+  ResolutionBucket,
 } from './types/iptv';
 import { ChannelLogo } from './components/ChannelLogo';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -27,7 +38,7 @@ import { SourcesPanel } from './components/SourcesModal';
 import { FavoritesView } from './components/FavoritesView';
 import { KotlinProjectView } from './components/KotlinProjectView';
 
-type ActiveTab = 'channels' | 'favorites' | 'sources' | 'kotlin';
+type ActiveTab = 'home' | 'channels' | 'favorites' | 'sources' | 'kotlin';
 
 interface AppUpdateInfo {
   tag: string;
@@ -44,6 +55,7 @@ const LS_FAVORITES_KEY = 'ktp_iptv_favorites_v1';
 const LS_SOURCES_KEY = 'ktp_iptv_sources_v1';
 const LS_CUSTOM_CHANNELS_KEY = 'ktp_iptv_custom_channels_v1';
 const LS_PROXY_MODE_KEY = 'ktp_iptv_proxy_mode_v1';
+const LS_RECENT_CHANNELS_KEY = 'ktp_iptv_recent_v1';
 
 const CHANNEL_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'all', label: 'Tous les types' },
@@ -54,10 +66,23 @@ const CHANNEL_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'radio', label: 'Radio' },
 ];
 
+const RESOLUTION_OPTIONS: Array<{ value: 'all' | ResolutionBucket; label: string; short: string }> = [
+  { value: 'all', label: 'Toutes résolutions', short: 'Toutes' },
+  { value: '4k', label: '4K Ultra HD (2160p)', short: '4K UHD' },
+  { value: '1080p', label: 'Full HD (1080p)', short: '1080p FHD' },
+  { value: '720p', label: 'HD (720p)', short: '720p HD' },
+  { value: 'sd', label: 'SD (480p / 576p)', short: '480p SD' },
+];
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('channels');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [liveViewMode, setLiveViewMode] = useState<'channels' | 'folders'>('channels');
+
   const [meta, setMeta] = useState<CatalogMetaResponse | null>(null);
   const [remoteChannels, setRemoteChannels] = useState<IptvChannel[]>([]);
+  const [showcaseChannels, setShowcaseChannels] = useState<IptvChannel[]>([]);
+  const [heroIndex, setHeroIndex] = useState(0);
   const [totalRemote, setTotalRemote] = useState(0);
   const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -70,6 +95,7 @@ export default function App() {
   const [selectedType, setSelectedType] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedLanguage, setSelectedLanguage] = useState('all');
+  const [selectedResolution, setSelectedResolution] = useState<'all' | ResolutionBucket>('all');
   const [selectedProtocol, setSelectedProtocol] = useState<'all' | 'http' | 'https'>('all');
   const [sourceScope, setSourceScope] = useState<'all' | 'iptv-org' | 'custom'>('all');
   const [offset, setOffset] = useState(0);
@@ -84,6 +110,16 @@ export default function App() {
   const [showSystemModal, setShowSystemModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  // Recent watch history
+  const [recentChannelIds, setRecentChannelIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_RECENT_CHANNELS_KEY);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Favorites & Custom Sources
   const [favoriteLists, setFavoriteLists] = useState<FavoriteList[]>(() => {
@@ -135,6 +171,10 @@ export default function App() {
   }, [sources]);
 
   useEffect(() => {
+    localStorage.setItem(LS_RECENT_CHANNELS_KEY, JSON.stringify(recentChannelIds.slice(0, 30)));
+  }, [recentChannelIds]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(LS_CUSTOM_CHANNELS_KEY, JSON.stringify(customChannels.slice(0, 2000)));
     } catch {
@@ -151,14 +191,30 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Load iptv-org metadata + check In-App Update release
+  const loadMetaAndShowcase = async (forceRefresh = false) => {
+    try {
+      const [metaRes, hdRes] = await Promise.all([
+        fetch(`/api/iptv/meta${forceRefresh ? '?refresh=1' : ''}`).then((r) => r.json()),
+        fetch('/api/iptv/channels?limit=40&offset=0').then((r) => r.json()),
+      ]);
+      if (metaRes?.countries) setMeta(metaRes as CatalogMetaResponse);
+      if (Array.isArray(hdRes?.items)) {
+        const items = hdRes.items as IptvChannel[];
+        setShowcaseChannels(items);
+        setChannelLookup((prev) => {
+          const next = new Map(prev);
+          for (const ch of items) next.set(ch.id, ch);
+          return next;
+        });
+      }
+    } catch {
+      // silent fallback
+    }
+  };
+
+  // Load iptv-org metadata, showcase & check In-App Update release
   useEffect(() => {
-    fetch('/api/iptv/meta')
-      .then((r) => r.json())
-      .then((data: CatalogMetaResponse) => {
-        if (data?.countries) setMeta(data);
-      })
-      .catch(() => {});
+    loadMetaAndShowcase(false);
 
     fetch('/api/app/update')
       .then((r) => (r.ok ? r.json() : null))
@@ -197,6 +253,7 @@ export default function App() {
       category: selectedCategory,
       language: selectedLanguage,
       type: selectedType,
+      resolution: selectedResolution,
       protocol: selectedProtocol,
       q: debouncedQuery,
       limit: '80',
@@ -237,6 +294,7 @@ export default function App() {
     selectedCategory,
     selectedLanguage,
     selectedType,
+    selectedResolution,
     selectedProtocol,
     debouncedQuery,
     sourceScope,
@@ -250,6 +308,16 @@ export default function App() {
     });
   }, [customChannels]);
 
+  const handleSelectChannel = (ch: IptvChannel, switchToLive = false) => {
+    setActiveChannel(ch);
+    setChannelLookup((prev) => new Map(prev).set(ch.id, ch));
+    setRecentChannelIds((prev) => [ch.id, ...prev.filter((id) => id !== ch.id)].slice(0, 30));
+    if (switchToLive) {
+      setLiveViewMode('channels');
+      setActiveTab('channels');
+    }
+  };
+
   const handleLoadMore = async () => {
     if (loadingMore) return;
     const nextOffset = offset + 80;
@@ -260,6 +328,7 @@ export default function App() {
         category: selectedCategory,
         language: selectedLanguage,
         type: selectedType,
+        resolution: selectedResolution,
         protocol: selectedProtocol,
         q: debouncedQuery,
         limit: '80',
@@ -289,6 +358,7 @@ export default function App() {
       if (selectedCategory !== 'all' && !ch.categories.includes(selectedCategory)) return false;
       if (selectedLanguage !== 'all' && !ch.languages.includes(selectedLanguage)) return false;
       if (selectedType !== 'all' && ch.type !== (selectedType as ChannelType)) return false;
+      if (selectedResolution !== 'all' && ch.resolutionBucket !== selectedResolution) return false;
       if (selectedProtocol === 'http' && !ch.isHttp) return false;
       if (selectedProtocol === 'https' && ch.isHttp) return false;
       if (q) {
@@ -304,6 +374,7 @@ export default function App() {
     selectedCategory,
     selectedLanguage,
     selectedType,
+    selectedResolution,
     selectedProtocol,
     debouncedQuery,
   ]);
@@ -322,11 +393,41 @@ export default function App() {
     return set;
   }, [favoriteLists]);
 
+  const recentChannels = useMemo(
+    () =>
+      recentChannelIds
+        .map((id) => channelLookup.get(id))
+        .filter((c): c is IptvChannel => Boolean(c)),
+    [recentChannelIds, channelLookup]
+  );
+
+  const heroPool = useMemo(() => {
+    const withLogos = showcaseChannels.filter((c) => Boolean(c.logo));
+    const base = withLogos.length >= 5 ? withLogos : showcaseChannels;
+    return base.slice(0, 5);
+  }, [showcaseChannels]);
+
+  const currentHero = heroPool[heroIndex % Math.max(heroPool.length, 1)] || null;
+
+  const hdChannels = useMemo(
+    () =>
+      showcaseChannels
+        .filter(
+          (c) =>
+            c.resolutionBucket === '4k' ||
+            c.resolutionBucket === '1080p' ||
+            c.resolutionBucket === '720p'
+        )
+        .slice(0, 14),
+    [showcaseChannels]
+  );
+
   const activeFilterCount =
     (selectedCountry !== 'ALL' ? 1 : 0) +
     (selectedType !== 'all' ? 1 : 0) +
     (selectedCategory !== 'all' ? 1 : 0) +
     (selectedLanguage !== 'all' ? 1 : 0) +
+    (selectedResolution !== 'all' ? 1 : 0) +
     (selectedProtocol !== 'all' ? 1 : 0);
 
   const handleToggleFavorite = (channel: IptvChannel) => {
@@ -379,7 +480,7 @@ export default function App() {
   const handleAddSource = (source: PlaylistSource, channels: IptvChannel[]) => {
     setSources((prev) => [source, ...prev]);
     setCustomChannels((prev) => [...channels, ...prev]);
-    if (channels[0]) setActiveChannel(channels[0]);
+    if (channels[0]) handleSelectChannel(channels[0], true);
   };
 
   const handleRemoveSource = (sourceId: string) => {
@@ -393,7 +494,17 @@ export default function App() {
       ? displayedChannels.findIndex((c) => c.id === activeChannel.id)
       : -1;
     const next = displayedChannels[(idx + 1) % displayedChannels.length];
-    if (next) setActiveChannel(next);
+    if (next) handleSelectChannel(next);
+  };
+
+  const handlePrevChannel = () => {
+    if (displayedChannels.length === 0) return;
+    const idx = activeChannel
+      ? displayedChannels.findIndex((c) => c.id === activeChannel.id)
+      : 0;
+    const prevIdx = idx <= 0 ? displayedChannels.length - 1 : idx - 1;
+    const prev = displayedChannels[prevIdx];
+    if (prev) handleSelectChannel(prev);
   };
 
   const resetFilters = () => {
@@ -402,12 +513,25 @@ export default function App() {
     setSelectedType('all');
     setSelectedCategory('all');
     setSelectedLanguage('all');
+    setSelectedResolution('all');
     setSelectedProtocol('all');
     setSourceScope('all');
   };
 
+  const openCategoryFolder = (categoryId: string) => {
+    setSelectedCategory(categoryId);
+    setLiveViewMode('channels');
+    setActiveTab('channels');
+  };
+
+  const openResolutionFilter = (resBucket: 'all' | ResolutionBucket) => {
+    setSelectedResolution(resBucket);
+    setLiveViewMode('channels');
+    setActiveTab('channels');
+  };
+
   const renderFilterSelects = () => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2.5">
       <div className="relative">
         <select
           aria-label="Filtrer par pays"
@@ -477,6 +601,29 @@ export default function App() {
 
       <div className="relative">
         <select
+          aria-label="Filtrer par résolution vidéo"
+          value={selectedResolution}
+          onChange={(e) => setSelectedResolution(e.target.value as 'all' | ResolutionBucket)}
+          className="w-full h-11 pl-3 pr-8 rounded-xl bg-[#0B0D11] border border-slate-800 text-xs font-medium text-slate-200 appearance-none focus:outline-none focus:border-blue-500"
+        >
+          {RESOLUTION_OPTIONS.map((resOpt) => {
+            const count =
+              resOpt.value === 'all'
+                ? undefined
+                : meta?.resolutions?.find((r) => r.id === resOpt.value)?.count;
+            return (
+              <option key={resOpt.value} value={resOpt.value}>
+                Résolution : {resOpt.short}
+                {typeof count === 'number' && count > 0 ? ` (${count})` : ''}
+              </option>
+            );
+          })}
+        </select>
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+
+      <div className="relative">
+        <select
           aria-label="Filtrer par protocole HTTP/HTTPS"
           value={selectedProtocol}
           onChange={(e) => setSelectedProtocol(e.target.value as 'all' | 'http' | 'https')}
@@ -494,53 +641,45 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0B0D11] text-slate-100 pb-20 md:pb-8">
       {/* 3-Zone Top Bar Contract */}
-      <header className="sticky top-0 z-40 h-13 sm:h-14 bg-[#0B0D11]/95 backdrop-blur-md border-b border-slate-800/80">
-        <div className="max-w-[1440px] mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
-          <button
-            type="button"
-            onClick={() => setActiveTab('channels')}
-            className="font-display text-base sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
-          >
-            KTP IPTV
-          </button>
+      <header className="sticky top-0 z-40 h-14 bg-[#0B0D11]/95 backdrop-blur-md border-b border-slate-800/80">
+        <div className="max-w-[1440px] mx-auto h-full px-3 sm:px-6 flex items-center justify-between gap-4 sm:gap-8">
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Ouvrir le menu latéral"
+              className="min-h-[44px] min-w-[44px] rounded-xl hover:bg-[#1B212E] text-slate-200 flex items-center justify-center transition-colors"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('home')}
+              className="font-display text-base sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+            >
+              KTP IPTV
+            </button>
+          </div>
 
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400">
-            <button
-              type="button"
-              onClick={() => setActiveTab('channels')}
-              className={`whitespace-nowrap shrink-0 transition-colors ${
-                activeTab === 'channels' ? 'text-white' : 'hover:text-slate-200'
-              }`}
-            >
-              Chaînes
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('favorites')}
-              className={`whitespace-nowrap shrink-0 transition-colors ${
-                activeTab === 'favorites' ? 'text-white' : 'hover:text-slate-200'
-              }`}
-            >
-              Favoris ({allFavoriteChannelIds.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('sources')}
-              className={`whitespace-nowrap shrink-0 transition-colors ${
-                activeTab === 'sources' ? 'text-white' : 'hover:text-slate-200'
-              }`}
-            >
-              M3U & Xtream
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('kotlin')}
-              className={`whitespace-nowrap shrink-0 transition-colors ${
-                activeTab === 'kotlin' ? 'text-white' : 'hover:text-slate-200'
-              }`}
-            >
-              Kotlin & CI/CD
-            </button>
+            {[
+              { id: 'home', label: 'Accueil' },
+              { id: 'channels', label: 'Live TV' },
+              { id: 'favorites', label: `Favoris (${allFavoriteChannelIds.size})` },
+              { id: 'sources', label: 'M3U & Xtream' },
+              { id: 'kotlin', label: 'Kotlin & CI/CD' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id as ActiveTab)}
+                className={`whitespace-nowrap shrink-0 transition-colors ${
+                  activeTab === item.id ? 'text-white' : 'hover:text-slate-200'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </nav>
 
           <div className="shrink-0">
@@ -556,6 +695,262 @@ export default function App() {
       </header>
 
       <main className="max-w-[1440px] mx-auto px-3 sm:px-6 pt-3 sm:pt-5">
+        {/* OTT HOME SHOWCASE SCREEN */}
+        {activeTab === 'home' && (
+          <div className="space-y-6">
+            {/* Hero Featured Showcase Banner */}
+            <section className="relative rounded-2xl overflow-hidden bg-[#131720] border border-slate-800/80 min-h-[260px] sm:min-h-[320px] flex flex-col justify-end p-5 sm:p-8">
+              <div className="absolute inset-0 bg-gradient-to-br from-rose-950/35 via-[#131720] to-blue-950/35 pointer-events-none" />
+              {currentHero?.logo && (
+                <img
+                  src={currentHero.logo}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="absolute right-6 top-6 w-28 h-28 sm:w-44 sm:h-44 object-contain opacity-25 pointer-events-none select-none"
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-[#0B0D11] via-[#0B0D11]/60 to-transparent pointer-events-none" />
+
+              <div className="relative z-10 max-w-2xl space-y-3">
+                <div className="text-xs font-medium text-rose-400">
+                  À la une · {meta ? `${meta.stats.totalChannels.toLocaleString('fr-FR')} flux indexés` : 'Catalogue iptv-org'}
+                </div>
+                <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight text-white">
+                  {currentHero ? currentHero.name : 'KTP IPTV Broadcast'}
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-300">
+                  {currentHero
+                    ? `${currentHero.countryFlag} ${currentHero.countryName} · ${currentHero.categories[0] || 'Général'} · ${currentHero.quality || 'Adaptatif'} · ${currentHero.isHttp ? 'Relais Proxy HTTPS' : 'HTTPS'}`
+                    : 'Diffusez vos flux M3U, Xtream Codes et iptv-org avec sélecteur de résolution adaptatif et proxy HTTP↔HTTPS.'}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                  {currentHero && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectChannel(currentHero, true)}
+                      className="min-h-[44px] px-5 rounded-xl bg-white hover:bg-slate-200 text-black text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+                    >
+                      <Play className="w-4 h-4 fill-black" />
+                      <span>Regarder</span>
+                    </button>
+                  )}
+                  {currentHero && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFavorite(currentHero)}
+                      className="min-h-[44px] px-4 rounded-xl bg-[#1B212E]/90 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+                    >
+                      <Bookmark
+                        className={`w-4 h-4 ${
+                          allFavoriteChannelIds.has(currentHero.id)
+                            ? 'fill-amber-400 text-amber-400'
+                            : ''
+                        }`}
+                      />
+                      <span>
+                        {allFavoriteChannelIds.has(currentHero.id) ? 'Dans les favoris' : 'Favori'}
+                      </span>
+                    </button>
+                  )}
+                  {heroPool.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setHeroIndex((i) => (i + 1) % heroPool.length)}
+                      className="min-h-[44px] px-4 rounded-xl bg-[#1B212E]/80 hover:bg-slate-700 text-slate-200 text-xs font-medium inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      <span>Suivant</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {heroPool.length > 1 && (
+                  <div className="flex items-center gap-2 pt-2">
+                    {heroPool.map((item, idx) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        aria-label={`Afficher ${item.name}`}
+                        onClick={() => setHeroIndex(idx)}
+                        className={`h-2 rounded-full transition-all ${
+                          idx === heroIndex % heroPool.length
+                            ? 'w-6 bg-rose-500'
+                            : 'w-2 bg-slate-600 hover:bg-slate-400'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Quick Resolution Type Selector Strip */}
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                  Explorer par résolution vidéo
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedResolution('all');
+                    setActiveTab('channels');
+                  }}
+                  className="text-xs font-medium text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                >
+                  Tout parcourir
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                {RESOLUTION_OPTIONS.map((resOpt) => {
+                  const count =
+                    resOpt.value === 'all'
+                      ? meta?.stats.totalChannels
+                      : meta?.resolutions?.find((r) => r.id === resOpt.value)?.count;
+                  return (
+                    <button
+                      key={resOpt.value}
+                      type="button"
+                      onClick={() => openResolutionFilter(resOpt.value)}
+                      className="min-h-[68px] p-3.5 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 text-left transition-colors flex flex-col justify-between"
+                    >
+                      <div className="text-sm font-semibold text-white">{resOpt.short}</div>
+                      <div className="font-mono text-xs text-slate-400 tabular-nums mt-1">
+                        {typeof count === 'number'
+                          ? `${count.toLocaleString('fr-FR')} flux`
+                          : 'Tous formats'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Recent Watch Carousel */}
+            {recentChannels.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                    Récemment regardées
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setRecentChannelIds([])}
+                    className="text-xs text-slate-400 hover:text-slate-200 whitespace-nowrap"
+                  >
+                    Effacer
+                  </button>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {recentChannels.map((ch) => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => handleSelectChannel(ch, true)}
+                      className="w-44 shrink-0 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 p-3 text-left transition-colors space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <ChannelLogo src={ch.logo} name={ch.name} size="md" />
+                        <Play className="w-4 h-4 text-blue-400 shrink-0" />
+                      </div>
+                      <div className="text-sm font-medium text-white truncate">{ch.name}</div>
+                      <div className="text-xs text-slate-400 truncate">
+                        {ch.countryFlag} {ch.categories[0] || 'Live'}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* High Definition & Broadcast Channels Carousel */}
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                  Haute Définition & Chaînes recommandées
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiveViewMode('channels');
+                    setActiveTab('channels');
+                  }}
+                  className="text-xs font-medium text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                >
+                  Ouvrir Live TV
+                </button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {(hdChannels.length > 0 ? hdChannels : showcaseChannels).slice(0, 12).map((ch) => (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => handleSelectChannel(ch, true)}
+                    className="rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 p-3.5 text-left transition-colors flex flex-col justify-between gap-3 min-h-[124px]"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <ChannelLogo src={ch.logo} name={ch.name} size="md" />
+                      {ch.quality && (
+                        <span className="font-mono text-[11px] font-semibold text-blue-400">
+                          {ch.quality}
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-white truncate">{ch.name}</div>
+                      <div className="text-xs text-slate-400 truncate mt-0.5">
+                        {ch.countryFlag} {ch.countryName} · {ch.categories[0] || 'general'}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Categories Quick Folders */}
+            {meta?.categories && meta.categories.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                    Catégories populaires
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLiveViewMode('folders');
+                      setActiveTab('channels');
+                    }}
+                    className="text-xs font-medium text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                  >
+                    Vue dossiers
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {meta.categories.slice(0, 10).map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => openCategoryFolder(cat.id)}
+                      className="min-h-[56px] px-4 py-3 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 flex items-center justify-between gap-3 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="text-sm font-medium text-white truncate">{cat.name}</span>
+                      </div>
+                      <span className="font-mono text-xs text-slate-400 tabular-nums shrink-0">
+                        {cat.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* LIVE TV & MULTI-RESOLUTION GUIDE SCREEN */}
         {activeTab === 'channels' && (
           <div className="space-y-4">
             {/* Desktop Filter Toolbar */}
@@ -595,7 +990,7 @@ export default function App() {
               {renderFilterSelects()}
             </section>
 
-            {/* Player + Guide Split (Player is FIRST on mobile!) */}
+            {/* Player + Guide Split (Player FIRST on mobile) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 items-start">
               <div className="lg:col-span-7 xl:col-span-8 lg:sticky lg:top-20 space-y-3">
                 <VideoPlayer
@@ -606,6 +1001,7 @@ export default function App() {
                   onToggleFavorite={handleToggleFavorite}
                   favoriteLists={favoriteLists}
                   onToggleChannelInList={handleToggleChannelInList}
+                  onPrevChannel={handlePrevChannel}
                   onNextChannel={handleNextChannel}
                 />
 
@@ -638,15 +1034,44 @@ export default function App() {
 
               <div className="lg:col-span-5 xl:col-span-4 rounded-2xl bg-[#131720] border border-slate-800/80 overflow-hidden">
                 <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between gap-2">
-                  <h2 className="font-display text-sm font-semibold text-white">
-                    Guide des chaînes
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-display text-sm font-semibold text-white">
+                      {liveViewMode === 'folders' ? 'Dossiers Live TV' : 'Guide des chaînes'}
+                    </h2>
+                    <div className="flex items-center p-0.5 rounded-lg bg-[#0B0D11] border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setLiveViewMode('channels')}
+                        aria-label="Vue chaînes"
+                        className={`p-1.5 rounded-md transition-colors ${
+                          liveViewMode === 'channels'
+                            ? 'bg-[#1B212E] text-white'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <LayoutList className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLiveViewMode('folders')}
+                        aria-label="Vue dossiers"
+                        className={`p-1.5 rounded-md transition-colors ${
+                          liveViewMode === 'folders'
+                            ? 'bg-[#1B212E] text-white'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Folder className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-3">
                     {(activeFilterCount > 0 || searchQuery.trim() !== '') && (
                       <button
                         type="button"
                         onClick={resetFilters}
-                        className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                        className="text-xs text-blue-400 hover:text-blue-300 font-medium whitespace-nowrap"
                       >
                         Réinitialiser
                       </button>
@@ -661,7 +1086,75 @@ export default function App() {
                   </div>
                 </div>
 
-                {loadingCatalog ? (
+                {liveViewMode === 'folders' ? (
+                  <div className="divide-y divide-slate-800/70 max-h-[540px] lg:max-h-[640px] overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory('all');
+                        setLiveViewMode('channels');
+                      }}
+                      className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-[#1B212E]/70 transition-colors min-h-[52px]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="text-sm font-medium text-white">Toutes les chaînes</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
+                        <span>{(meta?.stats.totalChannels || totalRemote).toLocaleString('fr-FR')}</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('home')}
+                      className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-[#1B212E]/70 transition-colors min-h-[52px]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <History className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span className="text-sm font-medium text-white">Récemment regardées</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
+                        <span>{recentChannels.length}</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('favorites')}
+                      className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-[#1B212E]/70 transition-colors min-h-[52px]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Bookmark className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="text-sm font-medium text-white">Favoris</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
+                        <span>{allFavoriteChannelIds.size}</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </div>
+                    </button>
+
+                    {meta?.categories.map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => openCategoryFolder(cat.id)}
+                        className="w-full px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-[#1B212E]/70 transition-colors min-h-[52px]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span className="text-sm font-medium text-white truncate">{cat.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 font-mono text-xs text-slate-400 shrink-0">
+                          <span>{cat.count.toLocaleString('fr-FR')}</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : loadingCatalog ? (
                   <div className="p-8 flex flex-col items-center justify-center gap-2 text-xs text-slate-400">
                     <RefreshCw className="w-5 h-5 animate-spin text-blue-400" />
                     <span>Indexation des flux iptv-org…</span>
@@ -686,7 +1179,7 @@ export default function App() {
                         >
                           <button
                             type="button"
-                            onClick={() => setActiveChannel(ch)}
+                            onClick={() => handleSelectChannel(ch)}
                             className="flex items-center gap-3 flex-1 min-w-0 text-left min-h-[48px]"
                           >
                             <ChannelLogo src={ch.logo} name={ch.name} size="md" />
@@ -701,6 +1194,7 @@ export default function App() {
                               </div>
                               <div className="text-xs text-slate-400 truncate mt-0.5">
                                 {ch.countryFlag} {ch.countryName} · {ch.categories[0] || 'general'}
+                                {ch.quality ? ` · ${ch.quality}` : ''}
                                 {ch.languageNames[0] ? ` · ${ch.languageNames[0]}` : ''}
                                 {ch.isHttp ? ' · HTTP→Proxy' : ''}
                               </div>
@@ -751,10 +1245,7 @@ export default function App() {
             favoriteLists={favoriteLists}
             allKnownChannels={channelLookup}
             activeChannelId={activeChannel?.id}
-            onSelectChannel={(ch) => {
-              setActiveChannel(ch);
-              setActiveTab('channels');
-            }}
+            onSelectChannel={(ch) => handleSelectChannel(ch, true)}
             onCreateList={handleCreateFavoriteList}
             onDeleteList={handleDeleteFavoriteList}
             onRemoveFromList={handleToggleChannelInList}
@@ -778,10 +1269,10 @@ export default function App() {
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-[#0B0D11]/95 backdrop-blur-md border-t border-slate-800/80 grid grid-cols-4 items-center"
       >
         {[
-          { id: 'channels', label: 'Chaînes', icon: Tv },
+          { id: 'home', label: 'Accueil', icon: Home },
+          { id: 'channels', label: 'Live TV', icon: Tv },
           { id: 'favorites', label: 'Favoris', icon: Bookmark },
           { id: 'sources', label: 'Sources', icon: Server },
-          { id: 'kotlin', label: 'Kotlin', icon: Code2 },
         ].map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
@@ -790,8 +1281,8 @@ export default function App() {
               key={item.id}
               type="button"
               onClick={() => setActiveTab(item.id as ActiveTab)}
-              className={`min-h-[44px] flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
-                active ? 'text-blue-400' : 'text-slate-400'
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
+                active ? 'text-rose-400' : 'text-slate-400'
               }`}
             >
               <Icon className="w-5 h-5" />
@@ -800,6 +1291,171 @@ export default function App() {
           );
         })}
       </nav>
+
+      {/* OTT Slide-out Side Drawer (100% clean French) */}
+      {drawerOpen && (
+        <div
+          onClick={() => setDrawerOpen(false)}
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex"
+        >
+          <aside
+            onClick={(e) => e.stopPropagation()}
+            className="w-80 max-w-[85vw] h-full bg-[#131720] border-r border-slate-800 p-5 flex flex-col gap-5 overflow-y-auto"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-rose-600/20 border border-rose-500/30 flex items-center justify-center">
+                  <Tv className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <div className="font-display text-base font-bold text-white">KTP IPTV</div>
+                  <div className="text-xs text-slate-400">
+                    {proxyMode === 'direct' ? 'Lecture Directe' : 'Proxy HTTPS Actif'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(false)}
+                aria-label="Fermer le menu"
+                className="min-h-[40px] min-w-[40px] rounded-xl hover:bg-[#1B212E] text-slate-400 flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Actions
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  loadMetaAndShowcase(true);
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <RefreshCw className="w-4 h-4 text-blue-400" />
+                  <span>Actualiser le catalogue</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('sources');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Server className="w-4 h-4 text-emerald-400" />
+                  <span>Sources M3U & Xtream</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('kotlin');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Code2 className="w-4 h-4 text-violet-400" />
+                  <span>Kotlin & CI/CD</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Raccourcis
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedType('radio');
+                  setLiveViewMode('channels');
+                  setActiveTab('channels');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Radio className="w-4 h-4 text-amber-400" />
+                  <span>Chaînes Radio</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedResolution('1080p');
+                  setLiveViewMode('channels');
+                  setActiveTab('channels');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Sparkles className="w-4 h-4 text-sky-400" />
+                  <span>Flux Full HD (1080p)</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedResolution('4k');
+                  setLiveViewMode('channels');
+                  setActiveTab('channels');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Compass className="w-4 h-4 text-rose-400" />
+                  <span>Flux 4K Ultra HD</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRecentChannelIds([]);
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Trash2 className="w-4 h-4 text-rose-400" />
+                  <span>Effacer l’historique</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSystemModal(true);
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                  <span>Proxy & Mise à jour APK</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* Mobile Filter Bottom Sheet */}
       {showMobileFilters && (
@@ -906,7 +1562,7 @@ export default function App() {
                   </div>
                   <div className="text-xs text-slate-400">
                     {updateInfo.apkName
-                      ? `APK prêt : ${updateInfo.apkName} (${(
+                      ? `APK signé prêt : ${updateInfo.apkName} (${(
                           updateInfo.apkSize /
                           (1024 * 1024)
                         ).toFixed(1)} Mo)`

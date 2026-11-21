@@ -64,6 +64,8 @@ interface RawLanguage {
   name: string;
 }
 
+type ResolutionBucket = '4k' | '1080p' | '720p' | 'sd' | 'unknown';
+
 interface IndexedChannel {
   id: string;
   name: string;
@@ -77,6 +79,7 @@ interface IndexedChannel {
   languageNames: string[];
   type: 'live_24_7' | 'part_time' | 'vod' | 'series' | 'radio';
   quality?: string;
+  resolutionBucket: ResolutionBucket;
   network?: string;
   userAgent?: string;
   referrer?: string;
@@ -91,6 +94,7 @@ interface CachedCatalog {
   countries: Array<{ code: string; name: string; flag: string; count: number }>;
   categories: Array<{ id: string; name: string; count: number }>;
   languages: Array<{ code: string; name: string; count: number }>;
+  resolutions: Array<{ id: ResolutionBucket; label: string; count: number }>;
   stats: {
     totalChannels: number;
     totalCountries: number;
@@ -102,6 +106,30 @@ interface CachedCatalog {
     lastSyncedAt: string;
   };
   fetchedAt: number;
+}
+
+function decodeHtml(input?: string | null): string {
+  if (!input) return '';
+  return input
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .trim();
+}
+
+function classifyResolution(quality?: string | null, name?: string | null): ResolutionBucket {
+  const combined = `${quality || ''} ${name || ''}`.toLowerCase();
+  if (/(\b4k\b|\buhd\b|2160p|3840x2160)/.test(combined)) return '4k';
+  if (/(1080p|1080i|\bfhd\b|full\s?hd|1920x1080)/.test(combined)) return '1080p';
+  if (/(720p|\bhd\b|1280x720)/.test(combined)) return '720p';
+  if (/(576p|540p|480p|360p|240p|\bsd\b)/.test(combined)) return 'sd';
+  return 'unknown';
 }
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
@@ -184,6 +212,7 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
       const countryCounts = new Map<string, number>();
       const categoryCounts = new Map<string, number>();
       const languageCounts = new Map<string, number>();
+      const resolutionCounts = new Map<ResolutionBucket, number>();
 
       let httpCount = 0;
       let httpsCount = 0;
@@ -228,20 +257,27 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
           (s.channel && s.feed ? logoMap.get(`${s.channel}::${s.feed}`) : undefined) ||
           (s.channel ? logoMap.get(s.channel) : undefined);
 
+        const cleanName = decodeHtml(
+          ch?.name ? (s.title && s.title !== ch.name ? `${ch.name} (${s.title})` : ch.name) : s.title
+        );
+        const rawQuality = s.quality || feed?.format || undefined;
+        const resolutionBucket = classifyResolution(rawQuality, cleanName);
+
         indexed.push({
           id: `iptv-org:${i}:${s.channel || 'raw'}`,
-          name: ch?.name ? (s.title && s.title !== ch.name ? `${ch.name} (${s.title})` : ch.name) : s.title,
+          name: cleanName,
           url: s.url,
           logo,
           countryCode,
-          countryName,
+          countryName: decodeHtml(countryName),
           countryFlag,
           categories: chCategories,
           languages: langCodes,
           languageNames: langNames,
           type: isPartTime ? 'part_time' : 'live_24_7',
-          quality: s.quality || feed?.format || undefined,
-          network: ch?.network || undefined,
+          quality: rawQuality,
+          resolutionBucket,
+          network: ch?.network ? decodeHtml(ch.network) : undefined,
           userAgent: s.user_agent || undefined,
           referrer: s.referrer || undefined,
           isHttp,
@@ -251,6 +287,7 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         });
 
         countryCounts.set(countryCode, (countryCounts.get(countryCode) || 0) + 1);
+        resolutionCounts.set(resolutionBucket, (resolutionCounts.get(resolutionBucket) || 0) + 1);
         for (const c of chCategories) {
           categoryCounts.set(c, (categoryCounts.get(c) || 0) + 1);
         }
@@ -296,11 +333,19 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         }))
         .sort((a, b) => b.count - a.count);
 
+      const resolutionMeta: Array<{ id: ResolutionBucket; label: string; count: number }> = [
+        { id: '4k', label: '4K Ultra HD (2160p)', count: resolutionCounts.get('4k') || 0 },
+        { id: '1080p', label: 'Full HD (1080p)', count: resolutionCounts.get('1080p') || 0 },
+        { id: '720p', label: 'HD (720p)', count: resolutionCounts.get('720p') || 0 },
+        { id: 'sd', label: 'SD (480p / 576p)', count: resolutionCounts.get('sd') || 0 },
+      ];
+
       catalogCache = {
         channels: indexed,
         countries: countryList,
         categories: categoryList,
         languages: languageList,
+        resolutions: resolutionMeta,
         stats: {
           totalChannels: indexed.length,
           totalCountries: countryList.length,
@@ -387,12 +432,12 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
 
     if (line.startsWith('#EXTINF:')) {
       logo = extractM3uAttr(line, 'tvg-logo');
-      group = extractM3uAttr(line, 'group-title') || 'General';
+      group = decodeHtml(extractM3uAttr(line, 'group-title') || 'General');
       country = extractM3uAttr(line, 'tvg-country').toUpperCase() || 'INT';
-      lang = extractM3uAttr(line, 'tvg-language');
+      lang = decodeHtml(extractM3uAttr(line, 'tvg-language'));
       const tvgName = extractM3uAttr(line, 'tvg-name');
       const comma = line.lastIndexOf(',');
-      name = (comma !== -1 ? line.slice(comma + 1).trim() : '') || tvgName || `Chaîne ${out.length + 1}`;
+      name = decodeHtml((comma !== -1 ? line.slice(comma + 1).trim() : '') || tvgName || `Chaîne ${out.length + 1}`);
       continue;
     }
 
@@ -406,6 +451,7 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
     if (line.startsWith('#')) continue;
 
     if (/^https?:\/\//i.test(line)) {
+      const resBucket = classifyResolution(undefined, name);
       out.push({
         id: `m3u:${out.length}:${encodeURIComponent(name).slice(0, 20)}`,
         name,
@@ -418,6 +464,8 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
         languages: lang ? [lang.toLowerCase()] : [],
         languageNames: lang ? [lang] : [],
         type: 'live_24_7',
+        quality: resBucket !== 'unknown' ? resBucket.toUpperCase() : undefined,
+        resolutionBucket: resBucket,
         userAgent: ua || undefined,
         referrer: ref || undefined,
         isHttp: line.toLowerCase().startsWith('http://'),
@@ -474,6 +522,7 @@ async function startServer() {
         countries: catalog.countries,
         categories: catalog.categories,
         languages: catalog.languages,
+        resolutions: catalog.resolutions,
       });
     } catch (error) {
       res.status(502).json({
@@ -491,6 +540,7 @@ async function startServer() {
       const category = String(req.query.category || '').trim().toLowerCase();
       const language = String(req.query.language || '').trim().toLowerCase();
       const type = String(req.query.type || '').trim();
+      const resolution = String(req.query.resolution || '').trim().toLowerCase();
       const protocol = String(req.query.protocol || '').trim().toLowerCase();
       const q = String(req.query.q || '').trim().toLowerCase();
       const limit = Math.min(Math.max(Number(req.query.limit || 120), 1), 500);
@@ -501,6 +551,7 @@ async function startServer() {
         if (category && category !== 'all' && !ch.categories.includes(category)) return false;
         if (language && language !== 'all' && !ch.languages.includes(language)) return false;
         if (type && type !== 'all' && ch.type !== type) return false;
+        if (resolution && resolution !== 'all' && ch.resolutionBucket !== resolution) return false;
         if (protocol === 'http' && !ch.isHttp) return false;
         if (protocol === 'https' && ch.isHttp) return false;
         if (q) {
@@ -691,18 +742,20 @@ async function startServer() {
 
       const catNames = new Map<string, string>();
       for (const c of [...(liveCats || []), ...(vodCats || []), ...(seriesCats || [])]) {
-        if (c?.category_id) catNames.set(String(c.category_id), String(c.category_name || 'General'));
+        if (c?.category_id) catNames.set(String(c.category_id), decodeHtml(String(c.category_name || 'General')));
       }
 
       const channels: Array<Record<string, unknown>> = [];
-      const sourceLabel = label || new URL(normalizedHost).hostname;
+      const sourceLabel = decodeHtml(label) || new URL(normalizedHost).hostname;
 
       for (const s of (Array.isArray(liveStreams) ? liveStreams : []).slice(0, 1500)) {
         const cat = catNames.get(String(s.category_id || '')) || 'Live TV';
+        const name = decodeHtml(s.name) || `Live #${s.stream_id}`;
+        const resolutionBucket = classifyResolution(undefined, name);
         const url = `${normalizedHost}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${s.stream_id}.m3u8`;
         channels.push({
           id: `xtream:live:${s.stream_id}`,
-          name: s.name || `Live #${s.stream_id}`,
+          name,
           url,
           logo: s.stream_icon || undefined,
           countryCode: 'INT',
@@ -712,6 +765,8 @@ async function startServer() {
           languages: [],
           languageNames: [],
           type: 'live_24_7',
+          quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
+          resolutionBucket,
           isHttp: normalizedHost.startsWith('http://'),
           isGeoBlocked: false,
           sourceKind: 'xtream',
@@ -721,11 +776,13 @@ async function startServer() {
 
       for (const v of (Array.isArray(vodStreams) ? vodStreams : []).slice(0, 800)) {
         const cat = catNames.get(String(v.category_id || '')) || 'VOD';
+        const name = decodeHtml(v.name) || `Film #${v.stream_id}`;
+        const resolutionBucket = classifyResolution(undefined, name);
         const ext = v.container_extension || 'mp4';
         const url = `${normalizedHost}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${v.stream_id}.${ext}`;
         channels.push({
           id: `xtream:vod:${v.stream_id}`,
-          name: v.name || `Film #${v.stream_id}`,
+          name,
           url,
           logo: v.stream_icon || undefined,
           countryCode: 'INT',
@@ -735,6 +792,8 @@ async function startServer() {
           languages: [],
           languageNames: [],
           type: 'vod',
+          quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
+          resolutionBucket,
           isHttp: normalizedHost.startsWith('http://'),
           isGeoBlocked: false,
           sourceKind: 'xtream',
@@ -744,9 +803,11 @@ async function startServer() {
 
       for (const sr of (Array.isArray(seriesList) ? seriesList : []).slice(0, 400)) {
         const cat = catNames.get(String(sr.category_id || '')) || 'Séries';
+        const name = decodeHtml(sr.name) || `Série #${sr.series_id}`;
+        const resolutionBucket = classifyResolution(undefined, name);
         channels.push({
           id: `xtream:series:${sr.series_id}`,
-          name: sr.name || `Série #${sr.series_id}`,
+          name,
           url: `${normalizedHost}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${sr.series_id}.m3u8`,
           logo: sr.cover || undefined,
           countryCode: 'INT',
@@ -756,6 +817,8 @@ async function startServer() {
           languages: [],
           languageNames: [],
           type: 'series',
+          quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
+          resolutionBucket,
           isHttp: normalizedHost.startsWith('http://'),
           isGeoBlocked: false,
           sourceKind: 'xtream',
@@ -834,9 +897,16 @@ async function startServer() {
         html_url?: string;
         assets?: Array<{ name: string; size: number; browser_download_url: string }>;
       };
-      const debugApk = rel.assets?.find((a) => a.name.endsWith('debug.apk'));
-      const releaseApk = rel.assets?.find((a) => a.name.endsWith('.apk'));
-      const chosenApk = debugApk || releaseApk;
+      const assets = rel.assets || [];
+      const ktpReleaseApk = assets.find(
+        (a) => a.name.startsWith('KTP-IPTV-') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
+      );
+      const signedReleaseApk = assets.find(
+        (a) => a.name.includes('release') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
+      );
+      const debugApk = assets.find((a) => a.name.endsWith('debug.apk'));
+      const anyApk = assets.find((a) => a.name.endsWith('.apk'));
+      const chosenApk = ktpReleaseApk || signedReleaseApk || debugApk || anyApk;
       const payload = {
         tag: rel.tag_name || 'v1.0.0',
         name: rel.name || rel.tag_name || 'KTP IPTV',

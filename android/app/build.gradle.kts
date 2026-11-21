@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,20 +7,39 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val ciVersionCode = (project.findProperty("ktpVersionCode") as String?)?.toIntOrNull() ?: 5
+val ciVersionName = (project.findProperty("ktpVersionName") as String?) ?: "1.2.5"
+val keystoreFile = file("ktp-signing.p12")
+val keystorePassword = System.getenv("KTP_KEYSTORE_PASS")
+    ?: (project.findProperty("ktpKeystorePass") as String?)
+    ?: ""
+
 android {
     namespace = "com.ktp.iptv"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.ktp.iptv"
+        applicationId = "com.ktp.iptv.ott"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = ciVersionCode
+        versionName = ciVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        if (keystoreFile.exists() && keystorePassword.isNotBlank()) {
+            create("ktpRelease") {
+                storeFile = keystoreFile
+                storePassword = keystorePassword
+                storeType = "PKCS12"
+                keyAlias = "ktpiptv"
+                keyPassword = keystorePassword
+            }
         }
     }
 
@@ -30,10 +51,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfigs.findByName("ktpRelease")?.let {
+                signingConfig = it
+            }
         }
         debug {
-            applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfigs.findByName("ktpRelease")?.let {
+                signingConfig = it
+            }
         }
     }
 

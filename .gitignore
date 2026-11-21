@@ -14,4 +14,8 @@ android/local.properties
 *.iml
 .idea/
 .aistudio/
+*.p12
+*.jks
+public/assets/aistudio/
+
 

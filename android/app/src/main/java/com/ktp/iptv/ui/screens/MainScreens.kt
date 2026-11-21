@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,18 +17,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Source
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -37,55 +52,536 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import com.ktp.iptv.BuildConfig
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.ktp.iptv.BuildConfig
 import com.ktp.iptv.data.local.FavoriteChannelEntity
 import com.ktp.iptv.data.local.FavoriteListEntity
 import com.ktp.iptv.data.local.PlaylistSourceEntity
 import com.ktp.iptv.data.model.Channel
 import com.ktp.iptv.data.model.ChannelType
 import com.ktp.iptv.data.model.ProxyMode
+import com.ktp.iptv.data.model.ResolutionFilter
 import com.ktp.iptv.ui.player.ExoPlayerView
 import com.ktp.iptv.ui.theme.AmberFavorite
 import com.ktp.iptv.ui.theme.CobaltLight
+import com.ktp.iptv.ui.theme.CrimsonLive
+import com.ktp.iptv.ui.theme.ObsidianBg
 import com.ktp.iptv.ui.theme.ObsidianSurface
 import com.ktp.iptv.ui.theme.ObsidianSurfaceVariant
 import com.ktp.iptv.ui.viewmodel.IptvUiState
 
-private enum class ActivePicker { COUNTRY, TYPE, CATEGORY, LANGUAGE }
+private enum class ActivePicker { COUNTRY, TYPE, CATEGORY, LANGUAGE, RESOLUTION }
+
+@Composable
+fun OttDrawerContent(
+    state: IptvUiState,
+    sourcesCount: Int,
+    onRefreshCatalog: () -> Unit,
+    onOpenRadio: () -> Unit,
+    onClearHistory: () -> Unit,
+    onOpenSources: () -> Unit,
+    onOpenProxyAndUpdate: () -> Unit,
+    onCloseDrawer: () -> Unit
+) {
+    ModalDrawerSheet(
+        drawerContainerColor = ObsidianBg,
+        modifier = Modifier.width(300.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                color = ObsidianSurface,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(CrimsonLive.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Tv, contentDescription = null, tint = CrimsonLive)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("KTP IPTV", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(
+                            text = "${state.totalCatalogSize} flux · $sourcesCount source(s)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF94A3B8)
+                        )
+                        Text(
+                            text = "v${BuildConfig.VERSION_NAME}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CobaltLight
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text("Actions", style = MaterialTheme.typography.labelLarge, color = Color(0xFF94A3B8))
+
+            DrawerActionRow(Icons.Filled.Refresh, "Actualiser le catalogue", CobaltLight) {
+                onRefreshCatalog()
+                onCloseDrawer()
+            }
+            DrawerActionRow(Icons.Filled.Source, "Sources M3U & Xtream", Color(0xFFF59E0B)) {
+                onOpenSources()
+                onCloseDrawer()
+            }
+            DrawerActionRow(Icons.Filled.Settings, "Proxy HTTP/HTTPS", Color(0xFF38BDF8)) {
+                onOpenProxyAndUpdate()
+                onCloseDrawer()
+            }
+            DrawerActionRow(Icons.Filled.SystemUpdate, "Mise à jour In-App", Color(0xFF34D399)) {
+                onOpenProxyAndUpdate()
+                onCloseDrawer()
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text("Raccourcis", style = MaterialTheme.typography.labelLarge, color = Color(0xFF94A3B8))
+
+            DrawerActionRow(Icons.Filled.Radio, "Chaînes Radio", Color(0xFFE2E8F0)) {
+                onOpenRadio()
+                onCloseDrawer()
+            }
+            DrawerActionRow(Icons.Filled.History, "Effacer l'historique récent", CrimsonLive) {
+                onClearHistory()
+                onCloseDrawer()
+            }
+        }
+    }
+}
+
+@Composable
+private fun DrawerActionRow(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = ObsidianSurface,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = label,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Color(0xFF64748B)
+            )
+        }
+    }
+}
+
+@Composable
+fun HomeShowcaseScreen(
+    state: IptvUiState,
+    favoriteIds: Set<String>,
+    onPlayAndOpenLive: (Channel) -> Unit,
+    onToggleFavorite: (Channel) -> Unit,
+    onFilterResolutionAndOpenLive: (ResolutionFilter) -> Unit,
+    onOpenCategoryAndLive: (String) -> Unit
+) {
+    val heroPool = remember(state.featuredChannels, state.filteredChannels) {
+        state.featuredChannels.ifEmpty { state.filteredChannels.take(5) }.take(5)
+    }
+    var heroIdx by remember { mutableIntStateOf(0) }
+    val heroChannel = heroPool.getOrNull(heroIdx % heroPool.size.coerceAtLeast(1))
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        item {
+            if (heroChannel != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(310.dp)
+                        .padding(horizontal = 12.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF172554), ObsidianSurface, Color(0xFF090D16))
+                            )
+                        )
+                ) {
+                    if (!heroChannel.logo.isNullOrBlank()) {
+                        AsyncImage(
+                            model = heroChannel.logo,
+                            contentDescription = heroChannel.name,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 36.dp)
+                                .size(140.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = 0.55f),
+                                        Color.Black.copy(alpha = 0.92f)
+                                    )
+                                )
+                            )
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "${heroChannel.countryCode} | ${heroChannel.name}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "${heroChannel.countryFlag} ${heroChannel.countryName} · ${heroChannel.categories.firstOrNull().orEmpty()} · ${heroChannel.quality ?: "HD"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFCBD5E1)
+                        )
+                        Spacer(Modifier.height(14.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    heroIdx = (heroIdx + 1) % heroPool.size.coerceAtLeast(1)
+                                }
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "Suivant", tint = Color.White)
+                                Text("Suivant", style = MaterialTheme.typography.labelSmall, color = Color(0xFFCBD5E1))
+                            }
+
+                            Button(
+                                onClick = { onPlayAndOpenLive(heroChannel) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp)
+                            ) {
+                                Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Lire", fontWeight = FontWeight.Bold)
+                            }
+
+                            val isFav = favoriteIds.contains(heroChannel.id)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable { onToggleFavorite(heroChannel) }
+                            ) {
+                                Icon(
+                                    imageVector = if (isFav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                    contentDescription = "Favoris",
+                                    tint = if (isFav) CrimsonLive else Color.White
+                                )
+                                Text("Favori", style = MaterialTheme.typography.labelSmall, color = Color(0xFFCBD5E1))
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            heroPool.forEachIndexed { idx, _ ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (idx == heroIdx) 8.dp else 6.dp)
+                                        .clip(CircleShape)
+                                        .background(if (idx == heroIdx) CrimsonLive else Color(0xFF64748B))
+                                        .clickable { heroIdx = idx }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick Resolution Filter Strip
+        item {
+            Column(Modifier.padding(horizontal = 12.dp)) {
+                Text(
+                    text = "Explorer par résolution",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ResolutionFilter.entries.forEach { res ->
+                        FilterChip(
+                            selected = state.filter.resolution == res,
+                            onClick = { onFilterResolutionAndOpenLive(res) },
+                            label = { Text(res.label) }
+                        )
+                    }
+                }
+            }
+        }
+
+        if (state.recentChannels.isNotEmpty()) {
+            item {
+                HorizontalChannelCarousel(
+                    title = "Récemment regardées",
+                    channels = state.recentChannels,
+                    onClickChannel = onPlayAndOpenLive
+                )
+            }
+        }
+
+        if (state.hdChannels.isNotEmpty()) {
+            item {
+                HorizontalChannelCarousel(
+                    title = "Chaînes Haute Définition (1080p / 4K)",
+                    channels = state.hdChannels,
+                    onClickChannel = onPlayAndOpenLive
+                )
+            }
+        }
+
+        if (state.featuredChannels.isNotEmpty()) {
+            item {
+                HorizontalChannelCarousel(
+                    title = "Chaînes Live recommandées",
+                    channels = state.featuredChannels,
+                    onClickChannel = onPlayAndOpenLive
+                )
+            }
+        }
+
+        if (state.vodAndSeriesChannels.isNotEmpty()) {
+            item {
+                HorizontalChannelCarousel(
+                    title = "Films & Séries (VOD / Xtream)",
+                    channels = state.vodAndSeriesChannels,
+                    onClickChannel = onPlayAndOpenLive
+                )
+            }
+        }
+
+        if (state.categories.isNotEmpty()) {
+            item {
+                Column(Modifier.padding(horizontal = 12.dp)) {
+                    Text(
+                        text = "Catégories populaires",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(state.categories.take(12)) { cat ->
+                            Surface(
+                                color = ObsidianSurface,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.clickable { onOpenCategoryAndLive(cat.id) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Filled.Folder, contentDescription = null, tint = AmberFavorite, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("${cat.name} (${cat.count})", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HorizontalChannelCarousel(
+    title: String,
+    channels: List<Channel>,
+    onClickChannel: (Channel) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(channels, key = { "${title}_${it.id}" }) { ch ->
+                Surface(
+                    color = ObsidianSurface,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .width(126.dp)
+                        .clickable { onClickChannel(ch) }
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(86.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ObsidianSurfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!ch.logo.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = ch.logo,
+                                    contentDescription = ch.name,
+                                    modifier = Modifier.size(58.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = ch.name.take(2).uppercase(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CobaltLight
+                                )
+                            }
+
+                            val resBadge = ch.quality ?: if (ch.resolutionBucket != "unknown") ch.resolutionBucket.uppercase() else ""
+                            if (resBadge.isNotBlank()) {
+                                Surface(
+                                    color = CobaltLight,
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(6.dp)
+                                ) {
+                                    Text(
+                                        text = resBadge,
+                                        color = Color.Black,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "${ch.countryCode} | ${ch.name}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CatalogScreen(
     state: IptvUiState,
     favoriteIds: Set<String>,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
     onQueryChange: (String) -> Unit,
     onSelectCountry: (String) -> Unit,
     onSelectType: (ChannelType?) -> Unit,
     onSelectCategory: (String) -> Unit,
     onSelectLanguage: (String) -> Unit,
+    onSelectResolution: (ResolutionFilter) -> Unit,
     onResetFilters: () -> Unit,
     onPlayChannel: (Channel) -> Unit,
+    onPrevChannel: () -> Unit,
+    onNextChannel: () -> Unit,
     onToggleFavorite: (Channel) -> Unit
 ) {
     var activePicker by remember { mutableStateOf<ActivePicker?>(null) }
+    var showFolderView by remember { mutableStateOf(false) }
+
+    if (isFullscreen) {
+        ExoPlayerView(
+            playableUrl = state.playableUrl,
+            channel = state.activeChannel,
+            isFullscreen = true,
+            onToggleFullscreen = onToggleFullscreen,
+            onPrevChannel = onPrevChannel,
+            onNextChannel = onNextChannel,
+            modifier = Modifier.fillMaxSize()
+        )
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -94,7 +590,11 @@ fun CatalogScreen(
     ) {
         ExoPlayerView(
             playableUrl = state.playableUrl,
-            channelName = state.activeChannel?.name
+            channel = state.activeChannel,
+            isFullscreen = false,
+            onToggleFullscreen = onToggleFullscreen,
+            onPrevChannel = onPrevChannel,
+            onNextChannel = onNextChannel
         )
 
         state.activeChannel?.let { active ->
@@ -114,7 +614,7 @@ fun CatalogScreen(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${active.countryFlag} ${active.countryName} · ${active.categories.firstOrNull().orEmpty()} · ${if (active.isHttp) "HTTP→Proxy" else "HTTPS"}",
+                        text = "${active.countryFlag} ${active.countryName} · ${active.categories.firstOrNull().orEmpty()} · ${active.quality ?: "Auto"} · ${if (active.isHttp) "HTTP→Proxy" else "HTTPS"}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -137,7 +637,7 @@ fun CatalogScreen(
             onValueChange = onQueryChange,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(vertical = 4.dp),
             singleLine = true,
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
@@ -157,6 +657,16 @@ fun CatalogScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            FilterChip(
+                selected = showFolderView,
+                onClick = { showFolderView = !showFolderView },
+                label = { Text(if (showFolderView) "Vue Chaînes" else "Vue Dossiers") }
+            )
+            FilterChip(
+                selected = state.filter.resolution != ResolutionFilter.ALL,
+                onClick = { activePicker = ActivePicker.RESOLUTION },
+                label = { Text(if (state.filter.resolution == ResolutionFilter.ALL) "Résolution" else state.filter.resolution.label) }
+            )
             FilterChip(
                 selected = state.filter.countryCode != "ALL",
                 onClick = { activePicker = ActivePicker.COUNTRY },
@@ -189,7 +699,8 @@ fun CatalogScreen(
             if (state.filter.countryCode != "ALL" ||
                 state.filter.channelType != null ||
                 state.filter.categoryId != "all" ||
-                state.filter.languageCode != "all"
+                state.filter.languageCode != "all" ||
+                state.filter.resolution != ResolutionFilter.ALL
             ) {
                 FilterChip(
                     selected = false,
@@ -210,6 +721,31 @@ fun CatalogScreen(
             state.error != null -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(text = state.error, color = Color(0xFFFCA5A5))
+                }
+            }
+            showFolderView -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        FolderRow("Toutes les chaînes", state.totalCatalogSize) {
+                            onResetFilters()
+                            showFolderView = false
+                        }
+                    }
+                    item {
+                        FolderRow("Récemment regardées", state.recentChannels.size) {
+                            showFolderView = false
+                        }
+                    }
+                    items(state.categories) { cat ->
+                        FolderRow(cat.name, cat.count) {
+                            onSelectCategory(cat.id)
+                            showFolderView = false
+                        }
+                    }
                 }
             }
             else -> {
@@ -263,7 +799,7 @@ fun CatalogScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${channel.countryFlag} ${channel.countryName} · ${channel.categories.firstOrNull().orEmpty()} · ${if (channel.isHttp) "HTTP→Proxy" else "HTTPS"}",
+                                        text = "${channel.countryFlag} ${channel.countryName} · ${channel.categories.firstOrNull().orEmpty()}${channel.quality?.let { " · $it" } ?: ""} · ${if (channel.isHttp) "HTTP→Proxy" else "HTTPS"}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -297,6 +833,14 @@ fun CatalogScreen(
                 contentPadding = PaddingValues(bottom = 24.dp)
             ) {
                 when (activePicker) {
+                    ActivePicker.RESOLUTION -> {
+                        items(ResolutionFilter.entries) { res ->
+                            ListPickerRow(res.label, state.filter.resolution == res) {
+                                onSelectResolution(res)
+                                activePicker = null
+                            }
+                        }
+                    }
                     ActivePicker.COUNTRY -> {
                         item {
                             ListPickerRow("Tous les pays", state.filter.countryCode == "ALL") {
@@ -356,6 +900,38 @@ fun CatalogScreen(
                     null -> {}
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FolderRow(title: String, count: Int, onClick: () -> Unit) {
+    Surface(
+        color = ObsidianSurface,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Folder, contentDescription = null, tint = AmberFavorite)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = title,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = count.toString(),
+                color = Color(0xFF94A3B8),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFF94A3B8))
         }
     }
 }

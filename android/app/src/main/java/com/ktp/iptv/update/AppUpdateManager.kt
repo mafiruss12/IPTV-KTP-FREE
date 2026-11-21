@@ -90,15 +90,15 @@ class AppUpdateManager(
             val tag = dto.tagName.orEmpty().ifBlank { return@withContext null }
 
             val assets = dto.assets.orEmpty()
-            val chosenAsset = if (BuildConfig.DEBUG) {
-                assets.find { it.name?.endsWith("debug.apk", ignoreCase = true) == true }
-                    ?: assets.find { it.name?.endsWith(".apk", ignoreCase = true) == true }
-            } else {
-                assets.find {
-                    it.name?.endsWith(".apk", ignoreCase = true) == true &&
-                        it.name.contains("release", ignoreCase = true)
-                } ?: assets.find { it.name?.endsWith(".apk", ignoreCase = true) == true }
-            }
+            val chosenAsset = assets.find {
+                it.name?.startsWith("KTP-IPTV-", ignoreCase = true) == true &&
+                    it.name.endsWith(".apk", ignoreCase = true)
+            } ?: assets.find {
+                it.name?.endsWith("release.apk", ignoreCase = true) == true &&
+                    !it.name.contains("unsigned", ignoreCase = true)
+            } ?: assets.find {
+                it.name?.endsWith("debug.apk", ignoreCase = true) == true
+            } ?: assets.find { it.name?.endsWith(".apk", ignoreCase = true) == true }
 
             AppUpdateRelease(
                 tag = tag,

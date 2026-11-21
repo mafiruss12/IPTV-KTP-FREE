@@ -32,6 +32,10 @@ data class IptvUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
     val filteredChannels: List<Channel> = emptyList(),
+    val featuredChannels: List<Channel> = emptyList(),
+    val hdChannels: List<Channel> = emptyList(),
+    val vodAndSeriesChannels: List<Channel> = emptyList(),
+    val recentChannels: List<Channel> = emptyList(),
     val totalCatalogSize: Int = 0,
     val httpStreamsCount: Int = 0,
     val httpsStreamsCount: Int = 0,
@@ -74,6 +78,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private val errorFlow = MutableStateFlow<String?>(null)
     private val filterFlow = MutableStateFlow(FilterState())
     private val activeChannelFlow = MutableStateFlow<Channel?>(null)
+    private val recentChannelsFlow = MutableStateFlow<List<Channel>>(emptyList())
     private val proxyModeFlow = MutableStateFlow(ProxyMode.AUTO_LOCAL)
     private val remoteProxyFlow = MutableStateFlow("")
     private val updateUiFlow = MutableStateFlow(UpdateUiState())
@@ -100,7 +105,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         proxyModeFlow,
         remoteProxyFlow,
         streamProtocolCounts,
-        updateUiFlow
+        updateUiFlow,
+        recentChannelsFlow
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val remote = values[0] as List<Channel>
@@ -121,6 +127,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         @Suppress("UNCHECKED_CAST")
         val protoCounts = values[11] as Pair<Int, Int>
         val updateState = values[12] as UpdateUiState
+        @Suppress("UNCHECKED_CAST")
+        val recent = values[13] as List<Channel>
 
         val all = custom + remote
         val q = filter.query.trim().lowercase()
@@ -129,10 +137,11 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             if (filter.channelType != null && ch.type != filter.channelType) return@filter false
             if (filter.categoryId != "all" && !ch.categories.contains(filter.categoryId)) return@filter false
             if (filter.languageCode != "all" && !ch.languages.contains(filter.languageCode)) return@filter false
+            if (filter.resolution != ResolutionFilter.ALL && ch.resolutionBucket != filter.resolution.key) return@filter false
             if (filter.onlyHttp != null && ch.isHttp != filter.onlyHttp) return@filter false
             if (q.isNotEmpty()) {
                 val hay = "${ch.name} ${ch.countryName} ${ch.network.orEmpty()} ${ch.categories.joinToString(" ")}".lowercase()
-                if (!hay.contains(q)) return@filter false
+                if (!hay.includesQuery(q)) return@filter false
             }
             true
         }.take(400).toList()
@@ -145,6 +154,10 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             isLoading = loading,
             error = error,
             filteredChannels = filtered,
+            featuredChannels = all.filter { !it.logo.isNullOrBlank() && it.type == ChannelType.LIVE_24_7 }.take(12),
+            hdChannels = all.filter { it.resolutionBucket == "1080p" || it.resolutionBucket == "4k" }.take(20),
+            vodAndSeriesChannels = all.filter { it.type == ChannelType.VOD || it.type == ChannelType.SERIES }.take(24),
+            recentChannels = recent,
             totalCatalogSize = all.size,
             httpStreamsCount = protoCounts.first,
             httpsStreamsCount = protoCounts.second,
@@ -218,13 +231,39 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         filterFlow.value = filterFlow.value.copy(languageCode = langCode)
     }
 
+    fun selectResolution(resolution: ResolutionFilter) {
+        filterFlow.value = filterFlow.value.copy(resolution = resolution)
+    }
+
     fun resetFilters() {
         filterFlow.value = FilterState()
     }
 
     fun playChannel(channel: Channel) {
         activeChannelFlow.value = channel
+        recentChannelsFlow.value = (listOf(channel) + recentChannelsFlow.value.filterNot { it.id == channel.id }).take(20)
     }
+
+    fun clearRecentHistory() {
+        recentChannelsFlow.value = emptyList()
+    }
+
+    fun playNextChannel() {
+        val list = uiState.value.filteredChannels
+        if (list.isEmpty()) return
+        val currentIdx = activeChannelFlow.value?.let { cur -> list.indexOfFirst { it.id == cur.id } } ?: -1
+        playChannel(list[(currentIdx + 1) % list.size])
+    }
+
+    fun playPreviousChannel() {
+        val list = uiState.value.filteredChannels
+        if (list.isEmpty()) return
+        val currentIdx = activeChannelFlow.value?.let { cur -> list.indexOfFirst { it.id == cur.id } } ?: 0
+        val prevIdx = if (currentIdx <= 0) list.lastIndex else currentIdx - 1
+        playChannel(list[prevIdx])
+    }
+
+    private fun String.includesQuery(q: String): Boolean = this.contains(q)
 
     fun setProxyMode(mode: ProxyMode) {
         proxyModeFlow.value = mode

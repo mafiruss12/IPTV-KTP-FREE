@@ -8,6 +8,33 @@ enum class ChannelType(val label: String) {
     RADIO("Radio")
 }
 
+enum class ResolutionFilter(val label: String, val key: String) {
+    ALL("Toutes résolutions", "all"),
+    UHD_4K("4K / UHD", "4k"),
+    FHD_1080("1080p FHD", "1080p"),
+    HD_720("720p HD", "720p"),
+    SD("480p / SD", "sd")
+}
+
+enum class AspectRatioMode(val label: String) {
+    FIT("Adapter"),
+    FILL("Remplir"),
+    ZOOM("Zoom"),
+    RATIO_16_9("16:9"),
+    RATIO_4_3("4:3")
+}
+
+data class VideoQualityTrack(
+    val id: String,
+    val label: String,
+    val height: Int,
+    val width: Int,
+    val bitrateKbps: Int,
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val isSelected: Boolean = false
+)
+
 enum class SourceKind {
     IPTV_ORG,
     M3U,
@@ -26,7 +53,7 @@ data class Channel(
     val name: String,
     val url: String,
     val logo: String? = null,
-    val countryCode: String = "INT",
+    val countryCode: stringOrEmpty = "INT",
     val countryName: String = "International",
     val countryFlag: String = "🌐",
     val categories: List<String> = listOf("general"),
@@ -34,6 +61,7 @@ data class Channel(
     val languageNames: List<String> = emptyList(),
     val type: ChannelType = ChannelType.LIVE_24_7,
     val quality: String? = null,
+    val resolutionBucket: String = "unknown",
     val network: String? = null,
     val userAgent: String? = null,
     val referrer: String? = null,
@@ -42,6 +70,8 @@ data class Channel(
     val sourceKind: SourceKind = SourceKind.IPTV_ORG,
     val sourceLabel: String = "iptv-org"
 )
+
+private typealias stringOrEmpty = String
 
 data class CountryFilterOption(
     val code: String,
@@ -68,6 +98,7 @@ data class FilterState(
     val channelType: ChannelType? = null,
     val categoryId: String = "all",
     val languageCode: String = "all",
+    val resolution: ResolutionFilter = ResolutionFilter.ALL,
     val onlyHttp: Boolean? = null
 )
 
@@ -79,3 +110,36 @@ data class IptvCatalog(
     val httpCount: Int,
     val httpsCount: Int
 )
+
+object TextSanitizer {
+    private val NUMERIC_ENTITY = Regex("&#(\\d+);")
+
+    fun decodeHtml(input: String): String {
+        if (!input.contains('&')) return input
+        var out = input
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
+            .replace("&#039;", "'")
+            .replace("&apos;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&nbsp;", " ")
+        out = NUMERIC_ENTITY.replace(out) { m ->
+            val code = m.groupValues[1].toIntOrNull()
+            if (code != null && code in 32..65535) code.toChar().toString() else m.value
+        }
+        return out.trim()
+    }
+
+    fun classifyResolution(quality: String?, name: String): String {
+        val hay = "${quality.orEmpty()} $name".lowercase()
+        return when {
+            hay.contains("2160") || hay.contains("4k") || hay.contains("uhd") -> "4k"
+            hay.contains("1080") || hay.contains("fhd") -> "1080p"
+            hay.contains("720") || Regex("\\bhd\\b").containsMatchIn(hay) -> "720p"
+            hay.contains("576") || hay.contains("540") || hay.contains("480") ||
+                hay.contains("360") || hay.contains("240") || Regex("\\bsd\\b").containsMatchIn(hay) -> "sd"
+            else -> "unknown"
+        }
+    }
+}

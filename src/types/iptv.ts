@@ -4,6 +4,18 @@ export type SourceKind = 'iptv-org' | 'm3u' | 'xtream';
 
 export type ProxyMode = 'auto' | 'always' | 'direct';
 
+export type ResolutionBucket = '4k' | '1080p' | '720p' | 'sd' | 'unknown';
+
+export type AspectRatioMode = 'fit' | 'fill' | 'zoom' | '16:9' | '4:3';
+
+export interface VideoQualityLevel {
+  index: number;
+  label: string;
+  height: number;
+  width: number;
+  bitrateKbps: number;
+}
+
 export interface IptvChannel {
   id: string;
   name: string;
@@ -17,6 +29,7 @@ export interface IptvChannel {
   languageNames: string[];
   type: ChannelType;
   quality?: string;
+  resolutionBucket?: ResolutionBucket;
   network?: string;
   userAgent?: string;
   referrer?: string;
@@ -45,6 +58,12 @@ export interface LanguageOption {
   count: number;
 }
 
+export interface ResolutionOption {
+  id: ResolutionBucket;
+  label: string;
+  count: number;
+}
+
 export interface CatalogStats {
   totalChannels: number;
   totalCountries: number;
@@ -61,6 +80,7 @@ export interface CatalogMetaResponse {
   countries: CountryOption[];
   categories: CategoryOption[];
   languages: LanguageOption[];
+  resolutions?: ResolutionOption[];
 }
 
 export interface FavoriteList {

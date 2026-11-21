@@ -3,6 +3,7 @@ package com.ktp.iptv.data.parser
 import com.ktp.iptv.data.model.Channel
 import com.ktp.iptv.data.model.ChannelType
 import com.ktp.iptv.data.model.SourceKind
+import com.ktp.iptv.data.model.TextSanitizer
 
 object M3uParser {
 
@@ -79,19 +80,22 @@ object M3uParser {
                 val langList = if (language.isNotBlank()) listOf(language.lowercase()) else emptyList()
                 val langNames = if (language.isNotBlank()) listOf(language) else emptyList()
 
+                val cleanName = TextSanitizer.decodeHtml(name.ifBlank { "Flux ${channels.size + 1}" })
+                val cleanGroup = TextSanitizer.decodeHtml(categorySlug)
                 channels.add(
                     Channel(
-                        id = "$sourceId:${tvgId.ifBlank { channels.size.toString() }}:${name.hashCode()}",
-                        name = name.ifBlank { "Flux ${channels.size + 1}" },
+                        id = "$sourceId:${tvgId.ifBlank { channels.size.toString() }}:${cleanName.hashCode()}",
+                        name = cleanName,
                         url = line,
                         logo = logo.ifBlank { null },
                         countryCode = country,
                         countryName = if (country == "INT") "International" else country,
                         countryFlag = if (country == "INT") "🌐" else "",
-                        categories = listOf(categorySlug),
+                        categories = listOf(cleanGroup),
                         languages = langList,
                         languageNames = langNames,
                         type = type,
+                        resolutionBucket = TextSanitizer.classifyResolution(null, cleanName),
                         userAgent = userAgent,
                         referrer = referrer,
                         isHttp = lower.startsWith("http://"),
