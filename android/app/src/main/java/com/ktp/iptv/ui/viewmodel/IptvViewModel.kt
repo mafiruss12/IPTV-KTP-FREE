@@ -16,6 +16,7 @@ import com.ktp.iptv.data.model.CountryFilterOption
 import com.ktp.iptv.data.model.FilterState
 import com.ktp.iptv.data.model.LanguageFilterOption
 import com.ktp.iptv.data.model.ProxyMode
+import com.ktp.iptv.data.model.ResolutionFilter
 import com.ktp.iptv.data.model.SourceKind
 import com.ktp.iptv.data.parser.M3uParser
 import kotlinx.coroutines.Dispatchers

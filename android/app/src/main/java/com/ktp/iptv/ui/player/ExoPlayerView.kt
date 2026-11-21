@@ -84,6 +84,7 @@ import java.util.Date
 import java.util.Locale
 
 @OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExoPlayerView(
     playableUrl: String?,
