@@ -42,6 +42,11 @@ data class AppUpdateRelease(
     val isNewer: Boolean
 )
 
+sealed class InstallLaunchResult {
+    data object InstallerLaunched : InstallLaunchResult()
+    data class PermissionRequired(val apkFile: File) : InstallLaunchResult()
+}
+
 class AppUpdateManager(
     private val client: OkHttpClient,
     private val gson: Gson = Gson()
@@ -49,6 +54,8 @@ class AppUpdateManager(
     companion object {
         private const val LATEST_RELEASE_API =
             "https://api.github.com/repos/mafiruss12/IPTV-KTP-FREE/releases/latest"
+        private const val LATEST_RELEASE_WEB =
+            "https://github.com/mafiruss12/IPTV-KTP-FREE/releases/latest"
 
         fun isRemoteVersionNewer(
             remoteTag: String,
@@ -77,6 +84,12 @@ class AppUpdateManager(
     }
 
     suspend fun checkForUpdate(): AppUpdateRelease? = withContext(Dispatchers.IO) {
+        val apiResult = runCatching { fetchFromGitHubApi() }.getOrNull()
+        if (apiResult != null) return@withContext apiResult
+        runCatching { fetchFromGitHubRedirect() }.getOrNull()
+    }
+
+    private fun fetchFromGitHubApi(): AppUpdateRelease? {
         val req = Request.Builder()
             .url(LATEST_RELEASE_API)
             .header("Accept", "application/vnd.github+json")
@@ -84,10 +97,10 @@ class AppUpdateManager(
             .build()
 
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return@withContext null
-            val body = resp.body?.string() ?: return@withContext null
-            val dto = gson.fromJson(body, GitHubReleaseDto::class.java) ?: return@withContext null
-            val tag = dto.tagName.orEmpty().ifBlank { return@withContext null }
+            if (!resp.isSuccessful) return null
+            val body = resp.body?.string() ?: return null
+            val dto = gson.fromJson(body, GitHubReleaseDto::class.java) ?: return null
+            val tag = dto.tagName.orEmpty().ifBlank { return null }
 
             val assets = dto.assets.orEmpty()
             val chosenAsset = assets.find {
@@ -100,14 +113,39 @@ class AppUpdateManager(
                 it.name?.endsWith("debug.apk", ignoreCase = true) == true
             } ?: assets.find { it.name?.endsWith(".apk", ignoreCase = true) == true }
 
-            AppUpdateRelease(
+            return AppUpdateRelease(
                 tag = tag,
                 title = dto.name ?: tag,
                 notes = dto.body.orEmpty(),
-                apkUrl = chosenAsset?.downloadUrl,
-                apkName = chosenAsset?.name,
+                apkUrl = chosenAsset?.downloadUrl
+                    ?: "https://github.com/mafiruss12/IPTV-KTP-FREE/releases/download/$tag/KTP-IPTV-$tag.apk",
+                apkName = chosenAsset?.name ?: "KTP-IPTV-$tag.apk",
                 apkSizeBytes = chosenAsset?.size ?: 0L,
-                htmlUrl = dto.htmlUrl ?: "https://github.com/mafiruss12/IPTV-KTP-FREE/releases",
+                htmlUrl = dto.htmlUrl ?: "https://github.com/mafiruss12/IPTV-KTP-FREE/releases/tag/$tag",
+                isNewer = isRemoteVersionNewer(tag, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+            )
+        }
+    }
+
+    private fun fetchFromGitHubRedirect(): AppUpdateRelease? {
+        val req = Request.Builder()
+            .url(LATEST_RELEASE_WEB)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) KTP-IPTV/${BuildConfig.VERSION_NAME}")
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            val finalUrl = resp.request.url.toString()
+            val tag = finalUrl.substringAfter("/releases/tag/", "").substringBefore("?").trim()
+            if (tag.isBlank()) return null
+            val apkName = "KTP-IPTV-$tag.apk"
+            return AppUpdateRelease(
+                tag = tag,
+                title = "KTP IPTV Android $tag",
+                notes = "",
+                apkUrl = "https://github.com/mafiruss12/IPTV-KTP-FREE/releases/download/$tag/$apkName",
+                apkName = apkName,
+                apkSizeBytes = 0L,
+                htmlUrl = finalUrl,
                 isNewer = isRemoteVersionNewer(tag, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
             )
         }
@@ -118,7 +156,7 @@ class AppUpdateManager(
         apkUrl: String,
         fileName: String,
         onProgress: (Float) -> Unit
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<InstallLaunchResult> = withContext(Dispatchers.IO) {
         runCatching {
             val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                 ?: context.cacheDir
@@ -161,28 +199,30 @@ class AppUpdateManager(
         }
     }
 
-    private fun launchApkInstaller(context: Context, apkFile: File) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !context.packageManager.canRequestPackageInstalls()
-        ) {
-            val permIntent = Intent(
-                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}")
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(permIntent)
-            return
-        }
+    suspend fun launchApkInstaller(context: Context, apkFile: File): InstallLaunchResult =
+        withContext(Dispatchers.Main) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !context.packageManager.canRequestPackageInstalls()
+            ) {
+                val permIntent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(permIntent)
+                return@withContext InstallLaunchResult.PermissionRequired(apkFile)
+            }
 
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(installIntent)
+            InstallLaunchResult.InstallerLaunched
         }
-        context.startActivity(installIntent)
-    }
 }

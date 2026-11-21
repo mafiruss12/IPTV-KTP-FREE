@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Source
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -114,7 +115,10 @@ class MainActivity : ComponentActivity() {
                             },
                             onClearHistory = viewModel::clearRecentHistory,
                             onOpenSources = { selectedTab = 3 },
-                            onOpenProxyAndUpdate = { selectedTab = 4 },
+                            onOpenProxyAndUpdate = {
+                                selectedTab = 4
+                                viewModel.checkForUpdate(silent = false)
+                            },
                             onCloseDrawer = { scope.launch { drawerState.close() } }
                         )
                     }
@@ -144,6 +148,21 @@ class MainActivity : ComponentActivity() {
                                         Text(title, fontWeight = FontWeight.Bold)
                                     },
                                     actions = {
+                                        val updateHighlight = state.availableUpdate?.isNewer == true || state.hasPendingUpdateApk
+                                        IconButton(onClick = {
+                                            if (updateHighlight) {
+                                                viewModel.openUpdatePrompt()
+                                            } else {
+                                                selectedTab = 4
+                                                viewModel.checkForUpdate(silent = false)
+                                            }
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Filled.SystemUpdate,
+                                                contentDescription = "Mise à jour In-App",
+                                                tint = if (updateHighlight) Color(0xFF34D399) else Color.White
+                                            )
+                                        }
                                         IconButton(onClick = { selectedTab = 4 }) {
                                             Icon(Icons.Filled.Settings, contentDescription = "Proxy & Mise à jour", tint = Color.White)
                                         }
@@ -204,6 +223,11 @@ class MainActivity : ComponentActivity() {
                                     onOpenCategoryAndLive = { catId ->
                                         viewModel.selectCategory(catId)
                                         selectedTab = 1
+                                    },
+                                    onInstallUpdate = { viewModel.downloadAndInstallUpdate(context) },
+                                    onOpenProxyAndUpdate = {
+                                        selectedTab = 4
+                                        viewModel.checkForUpdate(silent = false)
                                     }
                                 )
                                 1 -> CatalogScreen(

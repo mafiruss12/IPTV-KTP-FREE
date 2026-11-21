@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ktp.iptv.KtpIptvApp
 import com.ktp.iptv.update.AppUpdateRelease
+import com.ktp.iptv.update.InstallLaunchResult
 import com.ktp.iptv.data.local.FavoriteChannelEntity
 import com.ktp.iptv.data.local.FavoriteListEntity
 import com.ktp.iptv.data.local.PlaylistSourceEntity
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.io.File
 
 data class IptvUiState(
     val isLoading: Boolean = true,
@@ -56,7 +58,8 @@ data class IptvUiState(
     val isCheckingUpdate: Boolean = false,
     val updateDownloadProgress: Float? = null,
     val updateMessage: String? = null,
-    val updateDismissed: Boolean = false
+    val updateDismissed: Boolean = false,
+    val hasPendingUpdateApk: Boolean = false
 )
 
 data class UpdateUiState(
@@ -64,7 +67,8 @@ data class UpdateUiState(
     val isChecking: Boolean = false,
     val downloadProgress: Float? = null,
     val message: String? = null,
-    val dismissed: Boolean = false
+    val dismissed: Boolean = false,
+    val pendingApkFile: File? = null
 )
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
@@ -190,7 +194,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             isCheckingUpdate = updateState.isChecking,
             updateDownloadProgress = updateState.downloadProgress,
             updateMessage = updateState.message,
-            updateDismissed = updateState.dismissed
+            updateDismissed = updateState.dismissed,
+            hasPendingUpdateApk = updateState.pendingApkFile?.exists() == true
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), IptvUiState())
 
@@ -529,13 +534,67 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadAndInstallUpdate(context: Context) {
-        val release = updateUiFlow.value.release ?: return
-        val apkUrl = release.apkUrl ?: run {
-            updateUiFlow.value = updateUiFlow.value.copy(message = "Aucun APK attaché à cette release.")
-            return
+    fun openUpdatePrompt() {
+        updateUiFlow.value = updateUiFlow.value.copy(dismissed = false)
+        if (updateUiFlow.value.release == null && !updateUiFlow.value.isChecking) {
+            checkForUpdate(silent = false)
         }
+    }
+
+    fun downloadAndInstallUpdate(context: Context) {
         viewModelScope.launch {
+            val pendingFile = updateUiFlow.value.pendingApkFile
+            if (pendingFile != null && pendingFile.exists()) {
+                val relaunch = runCatching {
+                    app.appUpdateManager.launchApkInstaller(context, pendingFile)
+                }
+                updateUiFlow.value = relaunch.fold(
+                    onSuccess = { outcome ->
+                        when (outcome) {
+                            InstallLaunchResult.InstallerLaunched -> updateUiFlow.value.copy(
+                                pendingApkFile = null,
+                                downloadProgress = null,
+                                message = "Installateur Android lancé."
+                            )
+                            is InstallLaunchResult.PermissionRequired -> updateUiFlow.value.copy(
+                                pendingApkFile = outcome.apkFile,
+                                downloadProgress = null,
+                                message = "Autorisez « Sources inconnues » puis appuyez de nouveau sur Installer."
+                            )
+                        }
+                    },
+                    onFailure = { err ->
+                        updateUiFlow.value.copy(
+                            downloadProgress = null,
+                            message = "Échec d'installation : ${err.message}"
+                        )
+                    }
+                )
+                return@launch
+            }
+
+            var release = updateUiFlow.value.release
+            if (release?.apkUrl == null) {
+                updateUiFlow.value = updateUiFlow.value.copy(
+                    isChecking = true,
+                    message = "Recherche de la dernière version…"
+                )
+                release = runCatching { app.appUpdateManager.checkForUpdate() }.getOrNull()
+                updateUiFlow.value = updateUiFlow.value.copy(
+                    release = release,
+                    isChecking = false
+                )
+            }
+
+            val apkUrl = release?.apkUrl
+            if (release == null || apkUrl == null) {
+                updateUiFlow.value = updateUiFlow.value.copy(
+                    isChecking = false,
+                    message = "Impossible de localiser l'APK sur GitHub. Vérifiez votre connexion."
+                )
+                return@launch
+            }
+
             updateUiFlow.value = updateUiFlow.value.copy(
                 downloadProgress = 0f,
                 message = "Téléchargement de ${release.apkName ?: "la mise à jour"}…"
@@ -548,11 +607,19 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 updateUiFlow.value = updateUiFlow.value.copy(downloadProgress = progress)
             }
             updateUiFlow.value = result.fold(
-                onSuccess = {
-                    updateUiFlow.value.copy(
-                        downloadProgress = null,
-                        message = "Installateur lancé."
-                    )
+                onSuccess = { outcome ->
+                    when (outcome) {
+                        InstallLaunchResult.InstallerLaunched -> updateUiFlow.value.copy(
+                            pendingApkFile = null,
+                            downloadProgress = null,
+                            message = "Installateur Android lancé."
+                        )
+                        is InstallLaunchResult.PermissionRequired -> updateUiFlow.value.copy(
+                            pendingApkFile = outcome.apkFile,
+                            downloadProgress = null,
+                            message = "Autorisez « Sources inconnues » puis appuyez de nouveau sur Installer."
+                        )
+                    }
                 },
                 onFailure = { err ->
                     updateUiFlow.value.copy(

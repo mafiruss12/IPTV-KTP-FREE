@@ -1731,46 +1731,45 @@ export default function App() {
                   <span>Vérifier</span>
                 </button>
               </div>
-              {updateInfo ? (
-                <>
-                  <div className="text-sm font-semibold text-white">
+              <div className="text-sm font-semibold text-white">
+                {updateInfo ? (
+                  <>
                     {updateInfo.name}{' '}
                     <span className="font-mono text-xs text-slate-400">({updateInfo.tag})</span>
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {updateInfo.apkName
-                      ? `APK signé prêt : ${updateInfo.apkName} (${(
-                          updateInfo.apkSize /
-                          (1024 * 1024)
-                        ).toFixed(1)} Mo)`
-                      : 'Publication CI/CD disponible sur GitHub'}
-                  </div>
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {updateInfo.apkUrl && (
-                      <a
-                        href={updateInfo.apkUrl}
-                        download
-                        className="min-h-[40px] px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Télécharger l’APK</span>
-                      </a>
-                    )}
-                    <a
-                      href={updateInfo.htmlUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#1B212E] hover:bg-slate-700 text-slate-200 text-xs font-medium inline-flex items-center"
-                    >
-                      Notes de version
-                    </a>
-                  </div>
-                </>
-              ) : (
-                <div className="text-xs text-slate-400">
-                  Vérification de la dernière version Android en cours…
-                </div>
-              )}
+                  </>
+                ) : (
+                  'KTP IPTV Android'
+                )}
+              </div>
+              <div className="text-xs text-slate-400">
+                {updateInfo?.apkName
+                  ? updateInfo.apkSize > 0
+                    ? `APK signé prêt : ${updateInfo.apkName} (${(
+                        updateInfo.apkSize /
+                        (1024 * 1024)
+                      ).toFixed(1)} Mo)`
+                    : `APK signé prêt : ${updateInfo.apkName}`
+                  : 'Téléchargez directement le dernier APK Android signé depuis GitHub Releases.'}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <a
+                  href={updateInfo?.apkUrl || 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases/latest'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger l’APK Android</span>
+                </a>
+                <a
+                  href={updateInfo?.htmlUrl || 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#1B212E] hover:bg-slate-700 text-slate-200 text-xs font-medium inline-flex items-center"
+                >
+                  Notes de version
+                </a>
+              </div>
             </div>
 
             {/* Proxy Mode Options */}

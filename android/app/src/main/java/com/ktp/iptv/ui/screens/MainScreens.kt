@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -256,7 +257,9 @@ fun HomeShowcaseScreen(
     onToggleFavorite: (Channel) -> Unit,
     onFilterResolutionAndOpenLive: (ResolutionFilter) -> Unit,
     onOpenCountryAndLive: (String) -> Unit,
-    onOpenCategoryAndLive: (String) -> Unit
+    onOpenCategoryAndLive: (String) -> Unit,
+    onInstallUpdate: () -> Unit,
+    onOpenProxyAndUpdate: () -> Unit
 ) {
     val heroPool = remember(state.featuredChannels, state.filteredChannels) {
         state.featuredChannels.ifEmpty { state.filteredChannels.take(5) }.take(5)
@@ -269,6 +272,89 @@ fun HomeShowcaseScreen(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
+        val updateRelease = state.availableUpdate
+        if ((updateRelease != null && updateRelease.isNewer) || state.hasPendingUpdateApk) {
+            item {
+                Surface(
+                    color = Color(0xFF0F2922),
+                    border = BorderStroke(1.dp, Color(0xFF34D399).copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.SystemUpdate,
+                                contentDescription = null,
+                                tint = Color(0xFF34D399),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (state.hasPendingUpdateApk)
+                                        "APK prêt à installer"
+                                    else
+                                        "Mise à jour disponible (${updateRelease?.tag.orEmpty()})",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = state.updateMessage
+                                        ?: "Version installée : v${BuildConfig.VERSION_NAME}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFA7F3D0)
+                                )
+                            }
+                        }
+                        state.updateDownloadProgress?.let { progress ->
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "${(progress * 100).toInt()} % téléchargé",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFA7F3D0)
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onInstallUpdate,
+                                enabled = state.updateDownloadProgress == null && !state.isCheckingUpdate,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF10B981),
+                                    contentColor = Color.Black
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = when {
+                                        state.updateDownloadProgress != null -> "Téléchargement…"
+                                        state.hasPendingUpdateApk -> "Installer l'APK"
+                                        else -> "Télécharger & Installer"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            OutlinedButton(onClick = onOpenProxyAndUpdate) {
+                                Text("Détails")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             if (heroChannel != null) {
                 Box(
@@ -1596,14 +1682,35 @@ fun ProxySettingsScreen(
         }
 
         item {
+            val release = state.availableUpdate
+            val isDownloading = state.updateDownloadProgress != null
             Surface(color = ObsidianSurface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Mise à jour In-App", fontWeight = FontWeight.SemiBold)
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.SystemUpdate,
+                            contentDescription = null,
+                            tint = if (release?.isNewer == true || state.hasPendingUpdateApk) Color(0xFF34D399) else CobaltLight,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Mise à jour In-App", fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
                     Text(
                         text = "Version installée : v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF94A3B8)
                     )
+                    if (release != null) {
+                        val sizeText = if (release.apkSizeBytes > 0) {
+                            String.format(" · %.1f Mo", release.apkSizeBytes / (1024f * 1024f))
+                        } else ""
+                        Text(
+                            text = "Dernière version GitHub : ${release.tag}$sizeText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (release.isNewer) Color(0xFF34D399) else Color(0xFFCBD5E1)
+                        )
+                    }
                     state.updateMessage?.let { msg ->
                         Text(text = msg, style = MaterialTheme.typography.bodySmall, color = CobaltLight)
                     }
@@ -1612,21 +1719,37 @@ fun ProxySettingsScreen(
                             progress = { progress },
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Text(
+                            text = "${(progress * 100).toInt()} % téléchargé",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CobaltLight
+                        )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         OutlinedButton(
                             onClick = onCheckUpdate,
-                            enabled = !state.isCheckingUpdate && state.updateDownloadProgress == null
+                            enabled = !state.isCheckingUpdate && !isDownloading
                         ) {
-                            Text(if (state.isCheckingUpdate) "Vérification…" else "Vérifier")
+                            Text(if (state.isCheckingUpdate) "Vérif…" else "Vérifier")
                         }
-                        if (state.availableUpdate?.apkUrl != null) {
-                            Button(
-                                onClick = onInstallUpdate,
-                                enabled = state.updateDownloadProgress == null
-                            ) {
-                                Text(if (state.availableUpdate.isNewer) "Installer ${state.availableUpdate.tag}" else "Réinstaller APK")
+                        Button(
+                            onClick = onInstallUpdate,
+                            enabled = !isDownloading && !state.isCheckingUpdate,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            val btnLabel = when {
+                                isDownloading -> "Téléchargement…"
+                                state.hasPendingUpdateApk -> "Installer l'APK téléchargé"
+                                release?.isNewer == true -> "Télécharger & Installer ${release.tag}"
+                                release != null -> "Télécharger & Réinstaller ${release.tag}"
+                                else -> "Télécharger & Installer"
                             }
+                            Text(btnLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -1703,6 +1826,11 @@ fun InAppUpdateDialog(
                         progress = { progress },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Text(
+                        text = "${(progress * 100).toInt()} % téléchargé",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CobaltLight
+                    )
                 }
                 state.updateMessage?.let { msg ->
                     Text(text = msg, style = MaterialTheme.typography.bodySmall, color = CobaltLight)
@@ -1712,9 +1840,12 @@ fun InAppUpdateDialog(
         confirmButton = {
             Button(
                 onClick = onInstall,
-                enabled = state.updateDownloadProgress == null && release.apkUrl != null
+                enabled = state.updateDownloadProgress == null &&
+                    (release.apkUrl != null || state.hasPendingUpdateApk)
             ) {
-                Text("Télécharger & Installer")
+                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (state.hasPendingUpdateApk) "Installer maintenant" else "Télécharger & Installer")
             }
         },
         dismissButton = {

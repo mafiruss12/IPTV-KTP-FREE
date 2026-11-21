@@ -1217,48 +1217,95 @@ async function startServer() {
         res.json(updateCache.data);
         return;
       }
-      const ghRes = await fetch(
-        'https://api.github.com/repos/mafiruss12/IPTV-KTP-FREE/releases/latest',
-        {
-          headers: {
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'KTP-IPTV-Updater/1.0',
-          },
-          signal: AbortSignal.timeout(10000),
+
+      let payload: Record<string, unknown> | null = null;
+      try {
+        const ghRes = await fetch(
+          'https://api.github.com/repos/mafiruss12/IPTV-KTP-FREE/releases/latest',
+          {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              'User-Agent': 'KTP-IPTV-Updater/1.0',
+            },
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+        if (ghRes.ok) {
+          const rel = (await ghRes.json()) as {
+            tag_name?: string;
+            name?: string;
+            body?: string;
+            published_at?: string;
+            html_url?: string;
+            assets?: Array<{ name: string; size: number; browser_download_url: string }>;
+          };
+          const assets = rel.assets || [];
+          const ktpReleaseApk = assets.find(
+            (a) => a.name.startsWith('KTP-IPTV-') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
+          );
+          const signedReleaseApk = assets.find(
+            (a) => a.name.includes('release') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
+          );
+          const debugApk = assets.find((a) => a.name.endsWith('debug.apk'));
+          const anyApk = assets.find((a) => a.name.endsWith('.apk'));
+          const chosenApk = ktpReleaseApk || signedReleaseApk || debugApk || anyApk;
+          const tag = rel.tag_name || 'v1.0.0';
+          payload = {
+            tag,
+            name: rel.name || tag || 'KTP IPTV',
+            publishedAt: rel.published_at || new Date().toISOString(),
+            notes: rel.body || '',
+            htmlUrl: rel.html_url || 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases',
+            apkName: chosenApk?.name || `KTP-IPTV-${tag}.apk`,
+            apkUrl:
+              chosenApk?.browser_download_url ||
+              `https://github.com/mafiruss12/IPTV-KTP-FREE/releases/download/${tag}/KTP-IPTV-${tag}.apk`,
+            apkSize: chosenApk?.size || 0,
+          };
         }
-      );
-      if (!ghRes.ok) {
-        res.status(ghRes.status).json({ error: `GitHub Releases HTTP ${ghRes.status}` });
-        return;
+      } catch {
+        // fallback below
       }
-      const rel = (await ghRes.json()) as {
-        tag_name?: string;
-        name?: string;
-        body?: string;
-        published_at?: string;
-        html_url?: string;
-        assets?: Array<{ name: string; size: number; browser_download_url: string }>;
-      };
-      const assets = rel.assets || [];
-      const ktpReleaseApk = assets.find(
-        (a) => a.name.startsWith('KTP-IPTV-') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
-      );
-      const signedReleaseApk = assets.find(
-        (a) => a.name.includes('release') && a.name.endsWith('.apk') && !a.name.includes('unsigned')
-      );
-      const debugApk = assets.find((a) => a.name.endsWith('debug.apk'));
-      const anyApk = assets.find((a) => a.name.endsWith('.apk'));
-      const chosenApk = ktpReleaseApk || signedReleaseApk || debugApk || anyApk;
-      const payload = {
-        tag: rel.tag_name || 'v1.0.0',
-        name: rel.name || rel.tag_name || 'KTP IPTV',
-        publishedAt: rel.published_at || new Date().toISOString(),
-        notes: rel.body || '',
-        htmlUrl: rel.html_url || 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases',
-        apkName: chosenApk?.name || null,
-        apkUrl: chosenApk?.browser_download_url || null,
-        apkSize: chosenApk?.size || 0,
-      };
+
+      if (!payload) {
+        try {
+          const redirRes = await fetch('https://github.com/mafiruss12/IPTV-KTP-FREE/releases/latest', {
+            headers: { 'User-Agent': 'KTP-IPTV-Updater/1.0' },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(10000),
+          });
+          const tag = redirRes.url.split('/releases/tag/')[1]?.split('?')[0]?.trim();
+          if (tag) {
+            const apkName = `KTP-IPTV-${tag}.apk`;
+            payload = {
+              tag,
+              name: `KTP IPTV Android ${tag}`,
+              publishedAt: new Date().toISOString(),
+              notes: '',
+              htmlUrl: redirRes.url,
+              apkName,
+              apkUrl: `https://github.com/mafiruss12/IPTV-KTP-FREE/releases/download/${tag}/${apkName}`,
+              apkSize: 0,
+            };
+          }
+        } catch {
+          // fallback below
+        }
+      }
+
+      if (!payload) {
+        payload = {
+          tag: 'latest',
+          name: 'KTP IPTV Android (GitHub Releases)',
+          publishedAt: new Date().toISOString(),
+          notes: '',
+          htmlUrl: 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases/latest',
+          apkName: 'Dernier APK signé (GitHub)',
+          apkUrl: 'https://github.com/mafiruss12/IPTV-KTP-FREE/releases/latest',
+          apkSize: 0,
+        };
+      }
+
       updateCache = { data: payload, fetchedAt: Date.now() };
       res.json(payload);
     } catch (error) {
