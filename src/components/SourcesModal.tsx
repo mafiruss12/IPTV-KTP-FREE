@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { FileUp, Link2, Server, Trash2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { FileUp, Link2, Server, Trash2, CheckCircle2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import type { IptvChannel, PlaylistSource } from '../types/iptv';
 import { parseM3uContent } from '../utils/m3uParser';
 
@@ -18,6 +18,7 @@ export function SourcesPanel({ sources, onAddSource, onRemoveSource }: SourcesPa
   const [xtreamHost, setXtreamHost] = useState('');
   const [xtreamUser, setXtreamUser] = useState('');
   const [xtreamPass, setXtreamPass] = useState('');
+  const [showPass, setShowPass] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -166,7 +167,7 @@ export function SourcesPanel({ sources, onAddSource, onRemoveSource }: SourcesPa
       <div className="lg:col-span-7 rounded-2xl bg-[#131720] border border-slate-800/80 p-6">
         <h2 className="font-display text-lg font-semibold text-white">Ajouter une source IPTV</h2>
         <p className="text-sm text-slate-400 mt-1">
-          Toutes les requêtes HTTP et HTTPS sont automatiquement relayées via le proxy intégré pour éviter les blocages Mixed Content et CORS.
+          Toutes les requêtes HTTP et HTTPS sont relayées via le proxy intégré. Les flux publics Afrique et France/TNT sont déjà indexés ; importez vos identifiants Xtream ou M3U pour vos bouquets privés (Canal+ chiffrés, VOD, etc.).
         </p>
 
         <div className="flex items-center gap-1 p-1 bg-[#0B0D11] rounded-xl border border-slate-800 mt-5 w-fit">
@@ -226,12 +227,32 @@ export function SourcesPanel({ sources, onAddSource, onRemoveSource }: SourcesPa
               <button
                 type="button"
                 onClick={() => {
+                  setM3uName('Afrique complète');
+                  setM3uUrl('https://iptv-org.github.io/iptv/regions/afr.m3u');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-[#1B212E] hover:bg-slate-700 text-xs text-slate-300 transition-colors"
+              >
+                Afrique complète (530+)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setM3uName('France & TNT');
+                  setM3uUrl('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_france.m3u8');
+                }}
+                className="px-3 py-1.5 rounded-lg bg-[#1B212E] hover:bg-slate-700 text-xs text-slate-300 transition-colors"
+              >
+                France & TNT
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setM3uName('iptv-org Français');
                   setM3uUrl('https://iptv-org.github.io/iptv/languages/fra.m3u');
                 }}
                 className="px-3 py-1.5 rounded-lg bg-[#1B212E] hover:bg-slate-700 text-xs text-slate-300 transition-colors"
               >
-                Préremplir : iptv-org Français
+                Francophone
               </button>
               <button
                 type="button"
@@ -241,7 +262,7 @@ export function SourcesPanel({ sources, onAddSource, onRemoveSource }: SourcesPa
                 }}
                 className="px-3 py-1.5 rounded-lg bg-[#1B212E] hover:bg-slate-700 text-xs text-slate-300 transition-colors"
               >
-                Préremplir : iptv-org Sports
+                Sports
               </button>
             </div>
             <button
@@ -294,14 +315,24 @@ export function SourcesPanel({ sources, onAddSource, onRemoveSource }: SourcesPa
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1.5">Mot de passe</label>
-                <input
-                  type="password"
-                  required
-                  value={xtreamPass}
-                  onChange={(e) => setXtreamPass(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#0B0D11] border border-slate-800 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-                />
+                <div className="relative">
+                  <input
+                    type={showPass ? 'text' : 'password'}
+                    required
+                    value={xtreamPass}
+                    onChange={(e) => setXtreamPass(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full h-11 pl-3.5 pr-11 rounded-xl bg-[#0B0D11] border border-slate-800 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass((v) => !v)}
+                    aria-label={showPass ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] rounded-lg text-slate-400 hover:text-white flex items-center justify-center"
+                  >
+                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
             </div>
             <button

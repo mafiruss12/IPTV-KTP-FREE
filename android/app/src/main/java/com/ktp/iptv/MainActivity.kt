@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import com.ktp.iptv.data.model.Channel
 import com.ktp.iptv.data.model.ChannelType
+import com.ktp.iptv.data.model.SourceFilter
 import com.ktp.iptv.ui.screens.CatalogScreen
 import com.ktp.iptv.ui.screens.FavoritesScreen
 import com.ktp.iptv.ui.screens.HomeShowcaseScreen
@@ -96,7 +97,18 @@ class MainActivity : ComponentActivity() {
                             state = state,
                             sourcesCount = sources.size,
                             onRefreshCatalog = viewModel::refreshCatalog,
+                            onOpenAfrica = {
+                                viewModel.resetFilters()
+                                viewModel.selectCountry("AFR")
+                                selectedTab = 1
+                            },
+                            onOpenFrance = {
+                                viewModel.resetFilters()
+                                viewModel.selectCountry("FR")
+                                selectedTab = 1
+                            },
                             onOpenRadio = {
+                                viewModel.resetFilters()
                                 viewModel.selectChannelType(ChannelType.RADIO)
                                 selectedTab = 1
                             },
@@ -184,6 +196,11 @@ class MainActivity : ComponentActivity() {
                                         viewModel.selectResolution(res)
                                         selectedTab = 1
                                     },
+                                    onOpenCountryAndLive = { countryCode ->
+                                        viewModel.resetFilters()
+                                        viewModel.selectCountry(countryCode)
+                                        selectedTab = 1
+                                    },
                                     onOpenCategoryAndLive = { catId ->
                                         viewModel.selectCategory(catId)
                                         selectedTab = 1
@@ -200,11 +217,13 @@ class MainActivity : ComponentActivity() {
                                     onSelectCategory = viewModel::selectCategory,
                                     onSelectLanguage = viewModel::selectLanguage,
                                     onSelectResolution = viewModel::selectResolution,
+                                    onSelectSourceFilter = viewModel::selectSourceFilter,
                                     onResetFilters = viewModel::resetFilters,
                                     onPlayChannel = viewModel::playChannel,
                                     onPrevChannel = viewModel::playPreviousChannel,
                                     onNextChannel = viewModel::playNextChannel,
-                                    onToggleFavorite = { viewModel.toggleFavorite(it) }
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenFavorites = { selectedTab = 2 }
                                 )
                                 2 -> FavoritesScreen(
                                     lists = favLists,
@@ -241,8 +260,14 @@ class MainActivity : ComponentActivity() {
                                 3 -> SourcesScreen(
                                     sources = sources,
                                     onImportM3u = viewModel::importM3uUrl,
+                                    onImportM3uFile = viewModel::importM3uContent,
                                     onImportXtream = viewModel::importXtream,
-                                    onRemoveSource = viewModel::removeSource
+                                    onRemoveSource = viewModel::removeSource,
+                                    onOpenImportedChannels = {
+                                        viewModel.resetFilters()
+                                        viewModel.selectSourceFilter(SourceFilter.CUSTOM)
+                                        selectedTab = 1
+                                    }
                                 )
                                 else -> ProxySettingsScreen(
                                     state = state,

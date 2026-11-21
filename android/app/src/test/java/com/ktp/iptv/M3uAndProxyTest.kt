@@ -75,4 +75,22 @@ class M3uAndProxyTest {
         assertEquals("720p", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("720p", "Arte"))
         assertEquals("sd", com.ktp.iptv.data.model.TextSanitizer.classifyResolution("480i", "Chaine SD"))
     }
+
+    @Test
+    fun detectsAfricanChannelsAndSkipsWebLinks() {
+        assertTrue(com.ktp.iptv.data.model.TextSanitizer.isAfricanChannel("CI", "RTI 1"))
+        assertTrue(com.ktp.iptv.data.model.TextSanitizer.isAfricanChannel("SN", "RTS 1"))
+        assertTrue(com.ktp.iptv.data.model.TextSanitizer.isAfricanChannel("INT", "Africa 24 TV"))
+
+        val m3u = """
+            #EXTM3U
+            #EXTINF:-1 tvg-country="FR" group-title="France",France 24
+            https://cdn.example.com/france24/index.m3u8
+            #EXTINF:-1 tvg-country="FR" group-title="France",Web Only
+            https://www.youtube.com/watch?v=dQw4w9WgXcQ
+        """.trimIndent()
+        val parsed = M3uParser.parse(m3u, "Free-TV", "ftv", skipWebLinks = true)
+        assertEquals(1, parsed.size)
+        assertEquals("France 24", parsed.first().name)
+    }
 }

@@ -7,6 +7,7 @@ import {
   Compass,
   Download,
   Folder,
+  Globe,
   History,
   Home,
   LayoutList,
@@ -191,19 +192,35 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  const [africanShowcase, setAfricanShowcase] = useState<IptvChannel[]>([]);
+  const [frenchShowcase, setFrenchShowcase] = useState<IptvChannel[]>([]);
+
   const loadMetaAndShowcase = async (forceRefresh = false) => {
     try {
-      const [metaRes, hdRes] = await Promise.all([
+      const [metaRes, hdRes, afrRes, frRes] = await Promise.all([
         fetch(`/api/iptv/meta${forceRefresh ? '?refresh=1' : ''}`).then((r) => r.json()),
         fetch('/api/iptv/channels?limit=40&offset=0').then((r) => r.json()),
+        fetch('/api/iptv/channels?country=AFR&limit=16&offset=0').then((r) => r.json()),
+        fetch('/api/iptv/channels?country=FR&limit=16&offset=0').then((r) => r.json()),
       ]);
       if (metaRes?.countries) setMeta(metaRes as CatalogMetaResponse);
+      const collected: IptvChannel[] = [];
       if (Array.isArray(hdRes?.items)) {
-        const items = hdRes.items as IptvChannel[];
-        setShowcaseChannels(items);
+        setShowcaseChannels(hdRes.items as IptvChannel[]);
+        collected.push(...(hdRes.items as IptvChannel[]));
+      }
+      if (Array.isArray(afrRes?.items)) {
+        setAfricanShowcase(afrRes.items as IptvChannel[]);
+        collected.push(...(afrRes.items as IptvChannel[]));
+      }
+      if (Array.isArray(frRes?.items)) {
+        setFrenchShowcase(frRes.items as IptvChannel[]);
+        collected.push(...(frRes.items as IptvChannel[]));
+      }
+      if (collected.length > 0) {
         setChannelLookup((prev) => {
           const next = new Map(prev);
-          for (const ch of items) next.set(ch.id, ch);
+          for (const ch of collected) next.set(ch.id, ch);
           return next;
         });
       }
@@ -354,7 +371,11 @@ export default function App() {
     if (sourceScope === 'iptv-org') return [];
     const q = debouncedQuery.toLowerCase();
     return customChannels.filter((ch) => {
-      if (selectedCountry !== 'ALL' && ch.countryCode !== selectedCountry) return false;
+      if (selectedCountry === 'AFR') {
+        if (!ch.isAfrican && ch.countryCode !== 'AFR') return false;
+      } else if (selectedCountry !== 'ALL' && ch.countryCode !== selectedCountry) {
+        return false;
+      }
       if (selectedCategory !== 'all' && !ch.categories.includes(selectedCategory)) return false;
       if (selectedLanguage !== 'all' && !ch.languages.includes(selectedLanguage)) return false;
       if (selectedType !== 'all' && ch.type !== (selectedType as ChannelType)) return false;
@@ -526,6 +547,13 @@ export default function App() {
 
   const openResolutionFilter = (resBucket: 'all' | ResolutionBucket) => {
     setSelectedResolution(resBucket);
+    setLiveViewMode('channels');
+    setActiveTab('channels');
+  };
+
+  const openCountryExplorer = (countryCode: string) => {
+    resetFilters();
+    setSelectedCountry(countryCode);
     setLiveViewMode('channels');
     setActiveTab('channels');
   };
@@ -827,6 +855,127 @@ export default function App() {
                 })}
               </div>
             </section>
+
+            {/* Quick Bouquets: Afrique & France */}
+            <section className="space-y-3">
+              <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                Bouquets Afrique & France
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => openCountryExplorer('AFR')}
+                  className="min-h-[76px] p-4 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 flex items-center justify-between gap-4 text-left transition-colors"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-white">🌍 Afrique complète</div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      CI, SN, CM, CD, BJ, TG, BF, ML, MA, DZ, TN, NG, KE, ZA…
+                    </div>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-emerald-400 shrink-0">
+                    {(meta?.countries.find((c) => c.code === 'AFR')?.count || africanShowcase.length).toLocaleString('fr-FR')} flux
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCountryExplorer('FR')}
+                  className="min-h-[76px] p-4 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 flex items-center justify-between gap-4 text-left transition-colors"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-white">🇫🇷 France & TNT / Canal+</div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      CNews, C Star, Canal J, TF1, France TV, Arte, BFM TV, L’Équipe…
+                    </div>
+                  </div>
+                  <span className="font-mono text-xs font-semibold text-blue-400 shrink-0">
+                    {(meta?.countries.find((c) => c.code === 'FR')?.count || frenchShowcase.length).toLocaleString('fr-FR')} flux
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            {/* African Channels Carousel */}
+            {africanShowcase.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                    Chaînes Africaines
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => openCountryExplorer('AFR')}
+                    className="text-xs font-medium text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                  >
+                    Tout voir
+                  </button>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {africanShowcase.slice(0, 12).map((ch) => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => handleSelectChannel(ch, true)}
+                      className="w-44 shrink-0 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 p-3 text-left transition-colors space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <ChannelLogo src={ch.logo} name={ch.name} size="md" />
+                        {ch.quality && (
+                          <span className="font-mono text-[11px] font-semibold text-blue-400">
+                            {ch.quality}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm font-medium text-white truncate">{ch.name}</div>
+                      <div className="text-xs text-slate-400 truncate">
+                        {ch.countryFlag} {ch.countryName}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* French Channels Carousel */}
+            {frenchShowcase.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-display text-base sm:text-lg font-semibold text-white">
+                    France & TNT / Canal+
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => openCountryExplorer('FR')}
+                    className="text-xs font-medium text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                  >
+                    Tout voir
+                  </button>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {frenchShowcase.slice(0, 12).map((ch) => (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => handleSelectChannel(ch, true)}
+                      className="w-44 shrink-0 rounded-2xl bg-[#131720] hover:bg-[#1B212E] border border-slate-800/80 p-3 text-left transition-colors space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <ChannelLogo src={ch.logo} name={ch.name} size="md" />
+                        {ch.quality && (
+                          <span className="font-mono text-[11px] font-semibold text-blue-400">
+                            {ch.quality}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm font-medium text-white truncate">{ch.name}</div>
+                      <div className="text-xs text-slate-400 truncate">
+                        {ch.countryFlag} {ch.categories[0] || 'France'}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Recent Watch Carousel */}
             {recentChannels.length > 0 && (
@@ -1376,6 +1525,34 @@ export default function App() {
               <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 Raccourcis
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  openCountryExplorer('AFR');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Globe className="w-4 h-4 text-emerald-400" />
+                  <span>Chaînes Africaines</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openCountryExplorer('FR');
+                  setDrawerOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 rounded-xl bg-[#0B0D11] hover:bg-[#1B212E] text-sm font-medium text-slate-200 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Tv className="w-4 h-4 text-blue-400" />
+                  <span>France & TNT / Canal+</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
               <button
                 type="button"
                 onClick={() => {

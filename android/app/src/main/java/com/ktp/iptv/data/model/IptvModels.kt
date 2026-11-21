@@ -41,6 +41,12 @@ enum class SourceKind {
     XTREAM
 }
 
+enum class SourceFilter(val label: String) {
+    ALL("Toutes sources"),
+    CUSTOM("Mes M3U / Xtream"),
+    IPTV_ORG("iptv-org")
+}
+
 enum class ProxyMode(val label: String) {
     AUTO_LOCAL("Proxy Local Auto (HTTP ↔ HTTPS)"),
     FORCE_LOCAL("Proxy Local Forcé"),
@@ -53,7 +59,7 @@ data class Channel(
     val name: String,
     val url: String,
     val logo: String? = null,
-    val countryCode: stringOrEmpty = "INT",
+    val countryCode: String = "INT",
     val countryName: String = "International",
     val countryFlag: String = "🌐",
     val categories: List<String> = listOf("general"),
@@ -67,11 +73,10 @@ data class Channel(
     val referrer: String? = null,
     val isHttp: Boolean = false,
     val isGeoBlocked: Boolean = false,
+    val isAfrican: Boolean = false,
     val sourceKind: SourceKind = SourceKind.IPTV_ORG,
     val sourceLabel: String = "iptv-org"
 )
-
-private typealias stringOrEmpty = String
 
 data class CountryFilterOption(
     val code: String,
@@ -99,6 +104,7 @@ data class FilterState(
     val categoryId: String = "all",
     val languageCode: String = "all",
     val resolution: ResolutionFilter = ResolutionFilter.ALL,
+    val sourceFilter: SourceFilter = SourceFilter.ALL,
     val onlyHttp: Boolean? = null
 )
 
@@ -129,6 +135,22 @@ object TextSanitizer {
             if (code != null && code in 32..65535) code.toChar().toString() else m.value
         }
         return out.trim()
+    }
+
+    val AFRICAN_COUNTRY_CODES = setOf(
+        "AO", "BF", "BI", "BJ", "BW", "CD", "CF", "CG", "CI", "CM", "CV", "DJ", "DZ", "EG",
+        "EH", "ER", "ET", "GA", "GH", "GM", "GN", "GQ", "GW", "KE", "KM", "LR", "LS", "LY",
+        "MA", "MG", "ML", "MR", "MU", "MW", "MZ", "NA", "NE", "NG", "RE", "RW", "SC", "SD",
+        "SH", "SL", "SN", "SO", "SS", "ST", "SZ", "TD", "TF", "TG", "TN", "TZ", "UG", "YT",
+        "ZA", "ZM", "ZW"
+    )
+
+    fun isAfricanChannel(countryCode: String, name: String): Boolean {
+        if (countryCode.uppercase() in AFRICAN_COUNTRY_CODES) return true
+        val lower = name.lowercase()
+        return lower.contains("africa") || lower.contains("afrique") || lower.contains("nollywood") ||
+            lower.contains("rti ") || lower.contains("rts ") || lower.contains("crtv") ||
+            lower.contains("rtnc") || lower.contains("ortm") || lower.contains("2m ")
     }
 
     fun classifyResolution(quality: String?, name: String): String {

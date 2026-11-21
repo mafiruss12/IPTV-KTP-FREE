@@ -6,6 +6,7 @@ import com.ktp.iptv.data.remote.IptvOrgRepository
 import com.ktp.iptv.data.remote.XtreamRepository
 import com.ktp.iptv.proxy.LocalStreamProxy
 import com.ktp.iptv.update.AppUpdateManager
+import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -29,8 +30,16 @@ class KtpIptvApp : Application() {
         okHttpClient = OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(true)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .connectionSpecs(
+                listOf(
+                    ConnectionSpec.MODERN_TLS,
+                    ConnectionSpec.COMPATIBLE_TLS,
+                    ConnectionSpec.CLEARTEXT
+                )
+            )
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
             .build()
 
         localProxy = LocalStreamProxy(okHttpClient).apply { start() }

@@ -81,6 +81,9 @@ interface IptvDao {
     @Query("SELECT * FROM playlist_sources ORDER BY addedAt DESC")
     fun observeSources(): Flow<List<PlaylistSourceEntity>>
 
+    @Query("SELECT * FROM playlist_sources ORDER BY addedAt DESC")
+    suspend fun getAllSourcesOnce(): List<PlaylistSourceEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSource(source: PlaylistSourceEntity)
 

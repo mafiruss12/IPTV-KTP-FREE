@@ -85,6 +85,7 @@ interface IndexedChannel {
   referrer?: string;
   isHttp: boolean;
   isGeoBlocked: boolean;
+  isAfrican: boolean;
   sourceKind: 'iptv-org';
   sourceLabel: string;
 }
@@ -132,6 +133,30 @@ function classifyResolution(quality?: string | null, name?: string | null): Reso
   return 'unknown';
 }
 
+const AFRICAN_COUNTRY_CODES = new Set([
+  'AO', 'BF', 'BI', 'BJ', 'BW', 'CD', 'CF', 'CG', 'CI', 'CM', 'CV', 'DJ', 'DZ', 'EG',
+  'EH', 'ER', 'ET', 'GA', 'GH', 'GM', 'GN', 'GQ', 'GW', 'KE', 'KM', 'LR', 'LS', 'LY',
+  'MA', 'MG', 'ML', 'MR', 'MU', 'MW', 'MZ', 'NA', 'NE', 'NG', 'RE', 'RW', 'SC', 'SD',
+  'SH', 'SL', 'SN', 'SO', 'SS', 'ST', 'SZ', 'TD', 'TF', 'TG', 'TN', 'TZ', 'UG', 'YT',
+  'ZA', 'ZM', 'ZW',
+]);
+
+function isAfricanChannel(countryCode: string, name: string): boolean {
+  if (AFRICAN_COUNTRY_CODES.has(countryCode.toUpperCase())) return true;
+  const lower = name.toLowerCase();
+  return (
+    lower.includes('africa') ||
+    lower.includes('afrique') ||
+    lower.includes('nollywood') ||
+    lower.includes('rti ') ||
+    lower.includes('rts ') ||
+    lower.includes('crtv') ||
+    lower.includes('rtnc') ||
+    lower.includes('ortm') ||
+    lower.includes('2m ')
+  );
+}
+
 const CACHE_TTL_MS = 15 * 60 * 1000;
 let catalogCache: CachedCatalog | null = null;
 let pendingCatalogFetch: Promise<CachedCatalog> | null = null;
@@ -147,6 +172,19 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function fetchTextOrNull(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'KTP-IPTV-Proxy/1.0' },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
 async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
   if (!force && catalogCache && Date.now() - catalogCache.fetchedAt < CACHE_TTL_MS) {
     return catalogCache;
@@ -157,15 +195,22 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
 
   pendingCatalogFetch = (async () => {
     try {
-      const [streams, channels, feeds, logos, countries, categories, languages] = await Promise.all([
-        fetchJson<RawStream[]>('https://iptv-org.github.io/api/streams.json'),
-        fetchJson<RawChannel[]>('https://iptv-org.github.io/api/channels.json'),
-        fetchJson<RawFeed[]>('https://iptv-org.github.io/api/feeds.json'),
-        fetchJson<RawLogo[]>('https://iptv-org.github.io/api/logos.json'),
-        fetchJson<RawCountry[]>('https://iptv-org.github.io/api/countries.json'),
-        fetchJson<RawCategory[]>('https://iptv-org.github.io/api/categories.json'),
-        fetchJson<RawLanguage[]>('https://iptv-org.github.io/api/languages.json'),
-      ]);
+      const [streams, channels, feeds, logos, countries, categories, languages, afrM3u, freeTvFr, freeTvTd, freeTvNg, freeTvKe, freeTvEg] =
+        await Promise.all([
+          fetchJson<RawStream[]>('https://iptv-org.github.io/api/streams.json'),
+          fetchJson<RawChannel[]>('https://iptv-org.github.io/api/channels.json'),
+          fetchJson<RawFeed[]>('https://iptv-org.github.io/api/feeds.json'),
+          fetchJson<RawLogo[]>('https://iptv-org.github.io/api/logos.json'),
+          fetchJson<RawCountry[]>('https://iptv-org.github.io/api/countries.json'),
+          fetchJson<RawCategory[]>('https://iptv-org.github.io/api/categories.json'),
+          fetchJson<RawLanguage[]>('https://iptv-org.github.io/api/languages.json'),
+          fetchTextOrNull('https://iptv-org.github.io/iptv/regions/afr.m3u'),
+          fetchTextOrNull('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_france.m3u8'),
+          fetchTextOrNull('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_chad.m3u8'),
+          fetchTextOrNull('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_nigeria.m3u8'),
+          fetchTextOrNull('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_kenya.m3u8'),
+          fetchTextOrNull('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_egypt.m3u8'),
+        ]);
 
       const channelMap = new Map<string, RawChannel>();
       for (const ch of channels) {
@@ -217,6 +262,7 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
       let httpCount = 0;
       let httpsCount = 0;
       let customHeaderCount = 0;
+      let afrCount = 0;
       const seenUrls = new Set<string>();
 
       for (let i = 0; i < streams.length; i++) {
@@ -262,6 +308,8 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         );
         const rawQuality = s.quality || feed?.format || undefined;
         const resolutionBucket = classifyResolution(rawQuality, cleanName);
+        const african = isAfricanChannel(countryCode, cleanName);
+        if (african) afrCount++;
 
         indexed.push({
           id: `iptv-org:${i}:${s.channel || 'raw'}`,
@@ -282,6 +330,7 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
           referrer: s.referrer || undefined,
           isHttp,
           isGeoBlocked,
+          isAfrican: african,
           sourceKind: 'iptv-org',
           sourceLabel: 'iptv-org',
         });
@@ -296,6 +345,102 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         }
       }
 
+      // Merge additional African channels from iptv-org regions/afr.m3u
+      if (afrM3u) {
+        const parsedAfr = parseServerM3u(afrM3u, 'iptv-org Afrique', true);
+        for (const item of parsedAfr) {
+          if (seenUrls.has(item.url)) continue;
+          seenUrls.add(item.url);
+          const inferredCode = item.countryCode !== 'INT' ? item.countryCode : 'AFR';
+          const info = countryMap.get(inferredCode);
+          const finalCode = info ? inferredCode : 'AFR';
+          const langCodes = item.languages.length ? item.languages : info?.languages?.slice(0, 2) || [];
+          const langNames = langCodes.map((c) => languageMap.get(c) || c.toUpperCase());
+          indexed.push({
+            ...item,
+            id: `afr:${indexed.length}`,
+            countryCode: finalCode,
+            countryName: decodeHtml(info?.name || 'Afrique'),
+            countryFlag: info?.flag || '🌍',
+            languages: langCodes,
+            languageNames: langNames,
+            isAfrican: true,
+          });
+          if (item.isHttp) httpCount++;
+          else httpsCount++;
+          afrCount++;
+          countryCounts.set(finalCode, (countryCounts.get(finalCode) || 0) + 1);
+          resolutionCounts.set(item.resolutionBucket, (resolutionCounts.get(item.resolutionBucket) || 0) + 1);
+          for (const c of item.categories) {
+            categoryCounts.set(c, (categoryCounts.get(c) || 0) + 1);
+          }
+        }
+      }
+
+      // Merge Free-TV France (TF1, France TV, Arte, BFM, TV5Monde, etc.)
+      if (freeTvFr) {
+        const frInfo = countryMap.get('FR');
+        const parsedFr = parseServerM3u(freeTvFr, 'Free-TV France', true);
+        for (const item of parsedFr) {
+          if (seenUrls.has(item.url)) continue;
+          seenUrls.add(item.url);
+          indexed.push({
+            ...item,
+            id: `freetv-fr:${indexed.length}`,
+            countryCode: 'FR',
+            countryName: frInfo?.name || 'France',
+            countryFlag: frInfo?.flag || '🇫🇷',
+            languages: ['fra'],
+            languageNames: [languageMap.get('fra') || 'French'],
+            isAfrican: false,
+          });
+          if (item.isHttp) httpCount++;
+          else httpsCount++;
+          countryCounts.set('FR', (countryCounts.get('FR') || 0) + 1);
+          resolutionCounts.set(item.resolutionBucket, (resolutionCounts.get(item.resolutionBucket) || 0) + 1);
+          for (const c of item.categories) {
+            categoryCounts.set(c, (categoryCounts.get(c) || 0) + 1);
+          }
+          languageCounts.set('fra', (languageCounts.get('fra') || 0) + 1);
+        }
+      }
+
+      // Merge curated Free-TV Africa country playlists
+      for (const [cc, rawText] of [
+        ['TD', freeTvTd],
+        ['NG', freeTvNg],
+        ['KE', freeTvKe],
+        ['EG', freeTvEg],
+      ] as Array<[string, string | null]>) {
+        if (!rawText) continue;
+        const info = countryMap.get(cc);
+        const langCodes = info?.languages?.slice(0, 2) || [];
+        const langNames = langCodes.map((c) => languageMap.get(c) || c.toUpperCase());
+        const parsed = parseServerM3u(rawText, 'Free-TV Afrique', true);
+        for (const item of parsed) {
+          if (seenUrls.has(item.url)) continue;
+          seenUrls.add(item.url);
+          indexed.push({
+            ...item,
+            id: `freetv-${cc}:${indexed.length}`,
+            countryCode: cc,
+            countryName: info?.name || cc,
+            countryFlag: info?.flag || '🌍',
+            languages: langCodes,
+            languageNames: langNames,
+            isAfrican: true,
+          });
+          if (item.isHttp) httpCount++;
+          else httpsCount++;
+          afrCount++;
+          countryCounts.set(cc, (countryCounts.get(cc) || 0) + 1);
+          resolutionCounts.set(item.resolutionBucket, (resolutionCounts.get(item.resolutionBucket) || 0) + 1);
+          for (const c of item.categories) {
+            categoryCounts.set(c, (categoryCounts.get(c) || 0) + 1);
+          }
+        }
+      }
+
       indexed.sort((a, b) => {
         const score = (c: IndexedChannel) =>
           (c.type === 'live_24_7' ? 8 : 0) +
@@ -305,17 +450,23 @@ async function loadIptvOrgCatalog(force = false): Promise<CachedCatalog> {
         return score(b) - score(a);
       });
 
-      const countryList = Array.from(countryCounts.entries())
+      const sortedCountries = Array.from(countryCounts.entries())
+        .filter(([code]) => code !== 'AFR')
         .map(([code, count]) => {
           const info = countryMap.get(code);
           return {
             code,
-            name: info?.name || (code === 'INT' ? 'International' : code),
+            name: decodeHtml(info?.name || (code === 'INT' ? 'International' : code)),
             flag: info?.flag || '🌐',
             count,
           };
         })
         .sort((a, b) => b.count - a.count);
+
+      const countryList =
+        afrCount > 0
+          ? [{ code: 'AFR', name: 'Afrique (Toutes)', flag: '🌍', count: afrCount }, ...sortedCountries]
+          : sortedCountries;
 
       const categoryList = Array.from(categoryCounts.entries())
         .map(([id, count]) => ({
@@ -415,7 +566,7 @@ function extractM3uAttr(line: string, attr: string): string {
   return match ? match[1].trim() : '';
 }
 
-function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] {
+function parseServerM3u(content: string, sourceLabel: string, skipWebLinks = false): IndexedChannel[] {
   const lines = content.split(/\r?\n/);
   const out: IndexedChannel[] = [];
   let name = '';
@@ -434,6 +585,11 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
       logo = extractM3uAttr(line, 'tvg-logo');
       group = decodeHtml(extractM3uAttr(line, 'group-title') || 'General');
       country = extractM3uAttr(line, 'tvg-country').toUpperCase() || 'INT';
+      if (country === 'INT') {
+        const tvgId = extractM3uAttr(line, 'tvg-id');
+        const idMatch = tvgId.match(/\.([a-z]{2})@/i);
+        if (idMatch) country = idMatch[1].toUpperCase();
+      }
       lang = decodeHtml(extractM3uAttr(line, 'tvg-language'));
       const tvgName = extractM3uAttr(line, 'tvg-name');
       const comma = line.lastIndexOf(',');
@@ -451,6 +607,21 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
     if (line.startsWith('#')) continue;
 
     if (/^https?:\/\//i.test(line)) {
+      const lower = line.toLowerCase();
+      if (
+        skipWebLinks &&
+        (lower.includes('youtube.com/') || lower.includes('youtu.be/') || lower.includes('dailymotion.com/'))
+      ) {
+        name = '';
+        logo = '';
+        group = 'General';
+        country = 'INT';
+        lang = '';
+        ua = '';
+        ref = '';
+        continue;
+      }
+
       const resBucket = classifyResolution(undefined, name);
       out.push({
         id: `m3u:${out.length}:${encodeURIComponent(name).slice(0, 20)}`,
@@ -468,8 +639,9 @@ function parseServerM3u(content: string, sourceLabel: string): IndexedChannel[] 
         resolutionBucket: resBucket,
         userAgent: ua || undefined,
         referrer: ref || undefined,
-        isHttp: line.toLowerCase().startsWith('http://'),
+        isHttp: lower.startsWith('http://'),
         isGeoBlocked: false,
+        isAfrican: isAfricanChannel(country, `${group} ${name}`),
         sourceKind: 'iptv-org',
         sourceLabel,
       });
@@ -547,7 +719,11 @@ async function startServer() {
       const offset = Math.max(Number(req.query.offset || 0), 0);
 
       const filtered = catalog.channels.filter((ch) => {
-        if (country && country !== 'ALL' && ch.countryCode !== country) return false;
+        if (country === 'AFR') {
+          if (!ch.isAfrican && ch.countryCode !== 'AFR') return false;
+        } else if (country && country !== 'ALL' && ch.countryCode !== country) {
+          return false;
+        }
         if (category && category !== 'all' && !ch.categories.includes(category)) return false;
         if (language && language !== 'all' && !ch.languages.includes(language)) return false;
         if (type && type !== 'all' && ch.type !== type) return false;
@@ -699,60 +875,212 @@ async function startServer() {
     }
   });
 
-  // Xtream Codes API proxy (solves HTTP/HTTPS & CORS for player_api.php)
+  // Xtream Codes API proxy (solves HTTP/HTTPS, CORS, UA blocking, redirects & get.php fallback)
   app.post('/api/xtream/connect', async (req: Request, res: Response) => {
-    const { host, username, password, label } = req.body as {
+    const body = req.body as {
       host?: string;
       username?: string;
       password?: string;
       label?: string;
     };
 
-    if (!host || !username || !password) {
-      res.status(400).json({ error: 'Hôte, identifiant et mot de passe requis' });
+    let hostInput = String(body.host || '').trim();
+    let cleanUser = String(body.username || '').trim();
+    let cleanPass = String(body.password || '').trim();
+
+    if (hostInput && !/^https?:\/\//i.test(hostInput)) {
+      hostInput = `http://${hostInput}`;
+    }
+
+    let normalizedHost = hostInput.replace(/\/+$/, '');
+    try {
+      const parsed = new URL(hostInput);
+      if (!cleanUser) cleanUser = (parsed.searchParams.get('username') || '').trim();
+      if (!cleanPass) cleanPass = (parsed.searchParams.get('password') || '').trim();
+      const cleanedPath = parsed.pathname
+        .replace(/\/(player_api\.php|panel_api\.php|get\.php|xmltv\.php).*$/i, '')
+        .replace(/\/c\/?$/i, '')
+        .replace(/\/+$/, '');
+      normalizedHost = `${parsed.origin}${cleanedPath}`;
+    } catch {
+      normalizedHost = hostInput
+        .split('?')[0]
+        .replace(/\/(player_api\.php|panel_api\.php|get\.php).*$/i, '')
+        .replace(/\/+$/, '');
+    }
+
+    if (!normalizedHost || !cleanUser || !cleanPass) {
+      res.status(400).json({ error: 'Hôte, identifiant et mot de passe Xtream requis' });
       return;
     }
 
-    const baseHost = host.trim().replace(/\/+$/, '');
-    const normalizedHost = /^https?:\/\//i.test(baseHost) ? baseHost : `http://${baseHost}`;
-    const apiBase = `${normalizedHost}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    const encUser = encodeURIComponent(cleanUser);
+    const encPass = encodeURIComponent(cleanPass);
+    const apiUrl = `${normalizedHost}/player_api.php?username=${encUser}&password=${encPass}`;
+
+    const userAgents = [
+      'IPTVSmartersPro',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Lavf/58.76.100',
+    ];
 
     try {
-      const authRes = await fetch(apiBase, { signal: AbortSignal.timeout(15000) });
-      if (!authRes.ok) {
-        res.status(authRes.status).json({ error: `Serveur Xtream HTTP ${authRes.status}` });
-        return;
+      let activeUa = userAgents[0];
+      let authRes: globalThis.Response | null = null;
+      let authText = '';
+
+      for (const ua of userAgents) {
+        try {
+          const attempt = await fetch(apiUrl, {
+            headers: {
+              'User-Agent': ua,
+              Accept: 'application/json, text/plain, */*',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(15000),
+          });
+          authRes = attempt;
+          activeUa = ua;
+          authText = await attempt.text();
+          if (attempt.ok && authText.trim().length > 0) break;
+          if (attempt.status !== 403 && attempt.status !== 406 && attempt.status !== 429) break;
+        } catch {
+          // continue trying next UA
+        }
       }
-      const authData = (await authRes.json()) as {
-        user_info?: { auth?: number; status?: string; exp_date?: string };
-      };
-      if (!authData?.user_info || authData.user_info.auth === 0) {
-        res.status(401).json({ error: 'Identifiants Xtream invalides' });
+
+      if (!authRes) {
+        res.status(502).json({ error: `Serveur Xtream injoignable (${normalizedHost})` });
         return;
       }
 
+      const tryGetPhpFallback = async (baseOrigin: string) => {
+        const candidates = [
+          `${baseOrigin}/get.php?username=${encUser}&password=${encPass}&type=m3u_plus&output=m3u8`,
+          `${baseOrigin}/get.php?username=${encUser}&password=${encPass}&type=m3u_plus&output=ts`,
+        ];
+        for (const m3uUrl of candidates) {
+          try {
+            const mRes = await fetch(m3uUrl, {
+              headers: { 'User-Agent': activeUa },
+              redirect: 'follow',
+              signal: AbortSignal.timeout(20000),
+            });
+            if (!mRes.ok) continue;
+            const txt = await mRes.text();
+            if (txt.includes('#EXTINF')) {
+              const parsed = parseServerM3u(txt, decodeHtml(body.label) || new URL(baseOrigin).hostname);
+              if (parsed.length > 0) {
+                return parsed.map((c) => ({ ...c, sourceKind: 'xtream' as const, userAgent: c.userAgent || activeUa }));
+              }
+            }
+          } catch {
+            // ignore candidate error
+          }
+        }
+        return null;
+      };
+
+      let authData: {
+        user_info?: {
+          auth?: number | string | boolean;
+          status?: string;
+          exp_date?: string;
+          allowed_output_formats?: string[];
+        };
+      } | null = null;
+      if (authRes.ok && authText.trimStart().startsWith('{')) {
+        try {
+          authData = JSON.parse(authText);
+        } catch {
+          authData = null;
+        }
+      }
+
+      if (!authData?.user_info) {
+        if (authRes.status === 401 || authRes.status === 403) {
+          res.status(authRes.status).json({ error: `Accès refusé par le serveur Xtream (HTTP ${authRes.status})` });
+          return;
+        }
+        const m3uFallback = await tryGetPhpFallback(normalizedHost);
+        if (m3uFallback) {
+          res.json({ userInfo: { auth: 1, status: 'Active' }, channels: m3uFallback });
+          return;
+        }
+        res.status(502).json({ error: `Réponse Xtream invalide (HTTP ${authRes.status}). Vérifiez l'URL du serveur.` });
+        return;
+      }
+
+      const rawAuth = authData.user_info.auth;
+      const statusStr = String(authData.user_info.status || '');
+      const isZeroAuth = rawAuth === 0 || rawAuth === '0' || rawAuth === false || String(rawAuth).toLowerCase() === 'false';
+      const isTruthyAuth =
+        rawAuth === 1 || rawAuth === '1' || rawAuth === true || String(rawAuth).toLowerCase() === 'true';
+      const authValid = isTruthyAuth || (!isZeroAuth && statusStr.toLowerCase() === 'active');
+
+      if (!authValid) {
+        if (statusStr && statusStr.toLowerCase() !== 'active') {
+          res.status(401).json({ error: `Compte Xtream ${statusStr} (abonnement expiré ou désactivé)` });
+          return;
+        }
+        res.status(401).json({ error: 'Identifiant ou mot de passe refusé par le serveur Xtream (auth=0)' });
+        return;
+      }
+
+      let effectiveBase = normalizedHost;
+      try {
+        if (authRes.url) effectiveBase = new URL(authRes.url).origin;
+      } catch {
+        // keep normalizedHost
+      }
+
+      const apiBase = `${effectiveBase}/player_api.php?username=${encUser}&password=${encPass}`;
+      const allowedFormats = Array.isArray(authData.user_info.allowed_output_formats)
+        ? authData.user_info.allowed_output_formats.map((f) => String(f).toLowerCase())
+        : [];
+      const liveExt = allowedFormats.includes('m3u8')
+        ? 'm3u8'
+        : allowedFormats.includes('ts')
+          ? 'ts'
+          : 'm3u8';
+
+      const fetchXtreamArr = async (action: string) => {
+        try {
+          const r = await fetch(`${apiBase}&action=${action}`, {
+            headers: { 'User-Agent': activeUa },
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!r.ok) return [];
+          const json = await r.json();
+          return Array.isArray(json) ? json : [];
+        } catch {
+          return [];
+        }
+      };
+
       const [liveCats, liveStreams, vodCats, vodStreams, seriesCats, seriesList] = await Promise.all([
-        fetch(`${apiBase}&action=get_live_categories`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${apiBase}&action=get_live_streams`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${apiBase}&action=get_vod_categories`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${apiBase}&action=get_vod_streams`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${apiBase}&action=get_series_categories`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch(`${apiBase}&action=get_series`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetchXtreamArr('get_live_categories'),
+        fetchXtreamArr('get_live_streams'),
+        fetchXtreamArr('get_vod_categories'),
+        fetchXtreamArr('get_vod_streams'),
+        fetchXtreamArr('get_series_categories'),
+        fetchXtreamArr('get_series'),
       ]);
 
       const catNames = new Map<string, string>();
-      for (const c of [...(liveCats || []), ...(vodCats || []), ...(seriesCats || [])]) {
+      for (const c of [...liveCats, ...vodCats, ...seriesCats]) {
         if (c?.category_id) catNames.set(String(c.category_id), decodeHtml(String(c.category_name || 'General')));
       }
 
       const channels: Array<Record<string, unknown>> = [];
-      const sourceLabel = decodeHtml(label) || new URL(normalizedHost).hostname;
+      const sourceLabel = decodeHtml(body.label) || new URL(effectiveBase).hostname;
+      const isHttp = effectiveBase.startsWith('http://');
 
-      for (const s of (Array.isArray(liveStreams) ? liveStreams : []).slice(0, 1500)) {
+      for (const s of liveStreams.slice(0, 2500)) {
         const cat = catNames.get(String(s.category_id || '')) || 'Live TV';
         const name = decodeHtml(s.name) || `Live #${s.stream_id}`;
         const resolutionBucket = classifyResolution(undefined, name);
-        const url = `${normalizedHost}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${s.stream_id}.m3u8`;
+        const url = `${effectiveBase}/live/${encUser}/${encPass}/${s.stream_id}.${liveExt}`;
         channels.push({
           id: `xtream:live:${s.stream_id}`,
           name,
@@ -767,19 +1095,21 @@ async function startServer() {
           type: 'live_24_7',
           quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
           resolutionBucket,
-          isHttp: normalizedHost.startsWith('http://'),
+          userAgent: activeUa,
+          isHttp,
           isGeoBlocked: false,
+          isAfrican: isAfricanChannel('INT', `${cat} ${name}`),
           sourceKind: 'xtream',
           sourceLabel,
         });
       }
 
-      for (const v of (Array.isArray(vodStreams) ? vodStreams : []).slice(0, 800)) {
+      for (const v of vodStreams.slice(0, 1000)) {
         const cat = catNames.get(String(v.category_id || '')) || 'VOD';
         const name = decodeHtml(v.name) || `Film #${v.stream_id}`;
         const resolutionBucket = classifyResolution(undefined, name);
         const ext = v.container_extension || 'mp4';
-        const url = `${normalizedHost}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${v.stream_id}.${ext}`;
+        const url = `${effectiveBase}/movie/${encUser}/${encPass}/${v.stream_id}.${ext}`;
         channels.push({
           id: `xtream:vod:${v.stream_id}`,
           name,
@@ -794,21 +1124,23 @@ async function startServer() {
           type: 'vod',
           quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
           resolutionBucket,
-          isHttp: normalizedHost.startsWith('http://'),
+          userAgent: activeUa,
+          isHttp,
           isGeoBlocked: false,
+          isAfrican: false,
           sourceKind: 'xtream',
           sourceLabel,
         });
       }
 
-      for (const sr of (Array.isArray(seriesList) ? seriesList : []).slice(0, 400)) {
+      for (const sr of seriesList.slice(0, 500)) {
         const cat = catNames.get(String(sr.category_id || '')) || 'Séries';
         const name = decodeHtml(sr.name) || `Série #${sr.series_id}`;
         const resolutionBucket = classifyResolution(undefined, name);
         channels.push({
           id: `xtream:series:${sr.series_id}`,
           name,
-          url: `${normalizedHost}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${sr.series_id}.m3u8`,
+          url: `${effectiveBase}/series/${encUser}/${encPass}/${sr.series_id}.${liveExt}`,
           logo: sr.cover || undefined,
           countryCode: 'INT',
           countryName: 'Xtream Séries',
@@ -819,11 +1151,21 @@ async function startServer() {
           type: 'series',
           quality: resolutionBucket !== 'unknown' ? resolutionBucket.toUpperCase() : undefined,
           resolutionBucket,
-          isHttp: normalizedHost.startsWith('http://'),
+          userAgent: activeUa,
+          isHttp,
           isGeoBlocked: false,
+          isAfrican: false,
           sourceKind: 'xtream',
           sourceLabel,
         });
+      }
+
+      if (channels.length === 0) {
+        const m3uFallback = await tryGetPhpFallback(effectiveBase);
+        if (m3uFallback) {
+          res.json({ userInfo: authData.user_info, channels: m3uFallback });
+          return;
+        }
       }
 
       res.json({

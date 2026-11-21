@@ -35,6 +35,7 @@ export interface IptvChannel {
   referrer?: string;
   isHttp: boolean;
   isGeoBlocked: boolean;
+  isAfrican?: boolean;
   sourceKind: SourceKind;
   sourceLabel: string;
 }

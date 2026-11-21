@@ -12,7 +12,8 @@ object M3uParser {
     fun parse(
         content: String,
         sourceLabel: String = "Playlist M3U",
-        sourceId: String = "m3u"
+        sourceId: String = "m3u",
+        skipWebLinks: Boolean = false
     ): List<Channel> {
         val channels = mutableListOf<Channel>()
         val lines = content.lineSequence()
@@ -65,6 +66,18 @@ object M3uParser {
                 line.startsWith("https://", ignoreCase = true)
             ) {
                 val lower = line.lowercase()
+                if (skipWebLinks && (lower.contains("youtube.com/") || lower.contains("youtu.be/") || lower.contains("dailymotion.com/"))) {
+                    name = ""
+                    tvgId = ""
+                    logo = ""
+                    group = "general"
+                    country = "INT"
+                    language = ""
+                    userAgent = null
+                    referrer = null
+                    continue
+                }
+
                 val type = when {
                     lower.contains("/movie/") || lower.endsWith(".mp4") || lower.endsWith(".mkv") ->
                         ChannelType.VOD
@@ -82,6 +95,8 @@ object M3uParser {
 
                 val cleanName = TextSanitizer.decodeHtml(name.ifBlank { "Flux ${channels.size + 1}" })
                 val cleanGroup = TextSanitizer.decodeHtml(categorySlug)
+                val resBucket = TextSanitizer.classifyResolution(null, cleanName)
+                val african = TextSanitizer.isAfricanChannel(country, "$cleanGroup $cleanName")
                 channels.add(
                     Channel(
                         id = "$sourceId:${tvgId.ifBlank { channels.size.toString() }}:${cleanName.hashCode()}",
@@ -95,11 +110,13 @@ object M3uParser {
                         languages = langList,
                         languageNames = langNames,
                         type = type,
-                        resolutionBucket = TextSanitizer.classifyResolution(null, cleanName),
+                        quality = if (resBucket != "unknown") resBucket.uppercase() else null,
+                        resolutionBucket = resBucket,
                         userAgent = userAgent,
                         referrer = referrer,
                         isHttp = lower.startsWith("http://"),
                         isGeoBlocked = false,
+                        isAfrican = african,
                         sourceKind = SourceKind.M3U,
                         sourceLabel = sourceLabel
                     )

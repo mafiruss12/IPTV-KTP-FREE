@@ -10,6 +10,7 @@ import com.ktp.iptv.data.model.IptvCatalog
 import com.ktp.iptv.data.model.LanguageFilterOption
 import com.ktp.iptv.data.model.SourceKind
 import com.ktp.iptv.data.model.TextSanitizer
+import com.ktp.iptv.data.parser.M3uParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
@@ -74,6 +75,14 @@ class IptvOrgRepository(
 ) {
     companion object {
         private const val BASE = "https://iptv-org.github.io/api"
+        private const val AFR_M3U = "https://iptv-org.github.io/iptv/regions/afr.m3u"
+        private const val FREE_TV_FR_M3U = "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_france.m3u8"
+        private val FREE_TV_AFR_PLAYLISTS = listOf(
+            "TD" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_chad.m3u8",
+            "NG" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_nigeria.m3u8",
+            "KE" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_kenya.m3u8",
+            "EG" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_egypt.m3u8"
+        )
     }
 
     private inline fun <reified T> fetchList(url: String): List<T> {
@@ -89,6 +98,18 @@ class IptvOrgRepository(
         }
     }
 
+    private fun fetchTextOrNull(url: String): String? {
+        return runCatching {
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", "KTP-IPTV-Android/1.0")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) null else resp.body?.string()
+            }
+        }.getOrNull()
+    }
+
     suspend fun fetchCatalog(): IptvCatalog = withContext(Dispatchers.IO) {
         val streamsDeferred = async { fetchList<ApiStreamDto>("$BASE/streams.json") }
         val channelsDeferred = async { fetchList<ApiChannelDto>("$BASE/channels.json") }
@@ -97,6 +118,9 @@ class IptvOrgRepository(
         val countriesDeferred = async { fetchList<ApiCountryDto>("$BASE/countries.json") }
         val categoriesDeferred = async { fetchList<ApiCategoryDto>("$BASE/categories.json") }
         val languagesDeferred = async { fetchList<ApiLanguageDto>("$BASE/languages.json") }
+        val afrM3uDeferred = async { fetchTextOrNull(AFR_M3U) }
+        val freeTvFrDeferred = async { fetchTextOrNull(FREE_TV_FR_M3U) }
+        val freeTvAfrDeferred = FREE_TV_AFR_PLAYLISTS.map { (cc, u) -> cc to async { fetchTextOrNull(u) } }
 
         val streams = streamsDeferred.await()
         val channelMap = channelsDeferred.await().associateBy { it.id }
@@ -123,14 +147,15 @@ class IptvOrgRepository(
         val categoryMap = categoriesDeferred.await().associate { it.id to it.name }
         val languageMap = languagesDeferred.await().associate { it.code to it.name }
 
-        val result = ArrayList<Channel>(streams.size)
+        val result = ArrayList<Channel>(streams.size + 600)
         val countryCounts = HashMap<String, Int>()
         val categoryCounts = HashMap<String, Int>()
         val languageCounts = HashMap<String, Int>()
-        val seenUrls = HashSet<String>(streams.size)
+        val seenUrls = HashSet<String>(streams.size + 600)
 
         var httpCount = 0
         var httpsCount = 0
+        var afrCount = 0
 
         for ((index, stream) in streams.withIndex()) {
             val url = stream.url.trim()
@@ -146,7 +171,9 @@ class IptvOrgRepository(
 
             val countryCode = ch?.country ?: "INT"
             val countryInfo = countryMap[countryCode]
-            val countryName = countryInfo?.name ?: if (countryCode == "INT") "International" else countryCode
+            val countryName = TextSanitizer.decodeHtml(
+                countryInfo?.name ?: if (countryCode == "INT") "International" else countryCode
+            )
             val countryFlag = countryInfo?.flag ?: "🌐"
 
             val cats = ch?.categories?.takeIf { it.isNotEmpty() } ?: listOf("general")
@@ -166,12 +193,17 @@ class IptvOrgRepository(
                 stream.feed?.let { logoMap["$chId::$it"] } ?: logoMap[chId]
             }
 
-            val displayName = when {
+            val rawDisplayName = when {
                 ch != null && stream.title.isNotBlank() && stream.title != ch.name ->
                     "${ch.name} (${stream.title})"
                 ch != null -> ch.name
                 else -> stream.title
             }
+            val displayName = TextSanitizer.decodeHtml(rawDisplayName)
+            val rawQuality = stream.quality ?: feed?.format
+            val resBucket = TextSanitizer.classifyResolution(rawQuality, displayName)
+            val isAfr = TextSanitizer.isAfricanChannel(countryCode, displayName)
+            if (isAfr) afrCount++
 
             result.add(
                 Channel(
@@ -186,12 +218,14 @@ class IptvOrgRepository(
                     languages = langCodes,
                     languageNames = langNames,
                     type = if (isPartTime) ChannelType.PART_TIME else ChannelType.LIVE_24_7,
-                    quality = stream.quality ?: feed?.format,
-                    network = ch?.network,
+                    quality = rawQuality,
+                    resolutionBucket = resBucket,
+                    network = ch?.network?.let { TextSanitizer.decodeHtml(it) },
                     userAgent = stream.user_agent,
                     referrer = stream.referrer,
                     isHttp = isHttp,
                     isGeoBlocked = isGeoBlocked,
+                    isAfrican = isAfr,
                     sourceKind = SourceKind.IPTV_ORG,
                     sourceLabel = "iptv-org"
                 )
@@ -202,6 +236,92 @@ class IptvOrgRepository(
             for (l in langCodes) languageCounts[l] = (languageCounts[l] ?: 0) + 1
         }
 
+        // Merge additional African channels from iptv-org regions/afr.m3u
+        afrM3uDeferred.await()?.let { rawM3u ->
+            val parsedAfr = M3uParser.parse(rawM3u, "iptv-org Afrique", "afr-m3u", skipWebLinks = true)
+            for (ch in parsedAfr) {
+                if (!seenUrls.add(ch.url)) continue
+                val idMatch = Regex("""\.([a-z]{2})@""", RegexOption.IGNORE_CASE).find(ch.id)
+                val inferredCode = when {
+                    ch.countryCode != "INT" -> ch.countryCode
+                    idMatch != null -> idMatch.groupValues[1].uppercase()
+                    else -> "AFR"
+                }
+                val info = countryMap[inferredCode]
+                val finalCode = if (info != null) inferredCode else "AFR"
+                val finalName = info?.name ?: "Afrique"
+                val finalFlag = info?.flag ?: "🌍"
+                val langCodes = info?.languages?.take(2) ?: emptyList()
+                val langNames = langCodes.map { languageMap[it] ?: it.uppercase() }
+                val enriched = ch.copy(
+                    countryCode = finalCode,
+                    countryName = TextSanitizer.decodeHtml(finalName),
+                    countryFlag = finalFlag,
+                    languages = ch.languages.ifEmpty { langCodes },
+                    languageNames = ch.languageNames.ifEmpty { langNames },
+                    isAfrican = true,
+                    sourceKind = SourceKind.IPTV_ORG,
+                    sourceLabel = "iptv-org Afrique"
+                )
+                result.add(enriched)
+                if (enriched.isHttp) httpCount++ else httpsCount++
+                afrCount++
+                countryCounts[finalCode] = (countryCounts[finalCode] ?: 0) + 1
+                for (c in enriched.categories) categoryCounts[c] = (categoryCounts[c] ?: 0) + 1
+            }
+        }
+
+        // Merge curated Free-TV France (TF1, France TV, Arte, BFM, TV5Monde, etc.)
+        freeTvFrDeferred.await()?.let { rawFr ->
+            val frInfo = countryMap["FR"]
+            val parsedFr = M3uParser.parse(rawFr, "Free-TV France", "freetv-fr", skipWebLinks = true)
+            for (ch in parsedFr) {
+                if (!seenUrls.add(ch.url)) continue
+                val enriched = ch.copy(
+                    countryCode = "FR",
+                    countryName = frInfo?.name ?: "France",
+                    countryFlag = frInfo?.flag ?: "🇫🇷",
+                    languages = listOf("fra"),
+                    languageNames = listOf(languageMap["fra"] ?: "French"),
+                    isAfrican = false,
+                    sourceKind = SourceKind.IPTV_ORG,
+                    sourceLabel = "Free-TV France"
+                )
+                result.add(enriched)
+                if (enriched.isHttp) httpCount++ else httpsCount++
+                countryCounts["FR"] = (countryCounts["FR"] ?: 0) + 1
+                for (c in enriched.categories) categoryCounts[c] = (categoryCounts[c] ?: 0) + 1
+                languageCounts["fra"] = (languageCounts["fra"] ?: 0) + 1
+            }
+        }
+
+        // Merge curated Free-TV Africa playlists
+        for ((cc, deferred) in freeTvAfrDeferred) {
+            val rawAfr = deferred.await() ?: continue
+            val info = countryMap[cc]
+            val langCodes = info?.languages?.take(2) ?: emptyList()
+            val langNames = langCodes.map { languageMap[it] ?: it.uppercase() }
+            val parsed = M3uParser.parse(rawAfr, "Free-TV Afrique", "freetv-$cc", skipWebLinks = true)
+            for (ch in parsed) {
+                if (!seenUrls.add(ch.url)) continue
+                val enriched = ch.copy(
+                    countryCode = cc,
+                    countryName = info?.name ?: cc,
+                    countryFlag = info?.flag ?: "🌍",
+                    languages = langCodes,
+                    languageNames = langNames,
+                    isAfrican = true,
+                    sourceKind = SourceKind.IPTV_ORG,
+                    sourceLabel = "Free-TV Afrique"
+                )
+                result.add(enriched)
+                if (enriched.isHttp) httpCount++ else httpsCount++
+                afrCount++
+                countryCounts[cc] = (countryCounts[cc] ?: 0) + 1
+                for (c in enriched.categories) categoryCounts[c] = (categoryCounts[c] ?: 0) + 1
+            }
+        }
+
         result.sortByDescending { ch ->
             (if (ch.type == ChannelType.LIVE_24_7) 8 else 0) +
                 (if (!ch.logo.isNullOrBlank()) 4 else 0) +
@@ -209,17 +329,31 @@ class IptvOrgRepository(
                 (if (ch.countryCode != "INT") 1 else 0)
         }
 
-        val countries = countryCounts.entries
+        val sortedCountries = countryCounts.entries
+            .filter { it.key != "AFR" }
             .map { (code, count) ->
                 val info = countryMap[code]
                 CountryFilterOption(
                     code = code,
-                    name = info?.name ?: if (code == "INT") "International" else code,
+                    name = TextSanitizer.decodeHtml(info?.name ?: if (code == "INT") "International" else code),
                     flag = info?.flag ?: "🌐",
                     count = count
                 )
             }
             .sortedByDescending { it.count }
+
+        val countries = if (afrCount > 0) {
+            listOf(
+                CountryFilterOption(
+                    code = "AFR",
+                    name = "Afrique (Toutes)",
+                    flag = "🌍",
+                    count = afrCount
+                )
+            ) + sortedCountries
+        } else {
+            sortedCountries
+        }
 
         val categories = categoryCounts.entries
             .map { (id, count) ->
